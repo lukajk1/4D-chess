@@ -360,3 +360,33 @@ dialog::backdrop { background: #0007; }
 .unwrap-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .reset-unwrap { font-size: 12px; white-space: nowrap; }
 @media (max-width: 850px) { .unwrap-canvas { height: auto; aspect-ratio: 1; } }
+
+/* Explorer shell: the spatial view fills the window and the other views dock
+   beside it on demand. Overrides the stacked layout above. */
+.inspection main { max-width: none; padding: 18px 22px 22px; }
+.explorer-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.explorer-toolbar button { font-size: 13px; min-height: 34px; padding: 6px 13px; }
+.explorer-toolbar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.explorer-toolbar .explorer-expand { margin-left: auto; }
+
+.explorer-shell { display: flex; gap: 20px; align-items: stretch; height: calc(100vh - 200px); min-height: 420px; }
+.explorer-main { flex: 1; min-width: 0; display: flex; }
+.explorer-main > .cube-view { flex: 1; min-width: 0; display: flex; flex-direction: column; position: static; }
+/* The canvas takes whatever the panel's chrome leaves. */
+.explorer-main .cube-canvas { flex: 1 1 auto; height: auto; min-height: 0; max-height: none; }
+
+.explorer-side { flex: 0 0 380px; overflow-y: auto; overscroll-behavior: contain; }
+.side-panel + .side-panel { margin-top: 16px; }
+/* A 380px column is too narrow for the wide grids used at full width. */
+.explorer-side .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.explorer-side .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.explorer-side .unwrap-canvas { height: 300px; min-height: 0; }
+.explorer-side .cube-view { position: static; }
+
+.explorer-shell:fullscreen { height: 100vh; padding: 16px; background: var(--bg); }
+
+@media (max-width: 900px) {
+  .explorer-shell { flex-direction: column; height: auto; }
+  .explorer-side { flex: none; width: 100%; }
+  .explorer-main .cube-canvas { flex: none; aspect-ratio: 1; }
+}

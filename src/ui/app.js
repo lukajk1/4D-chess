@@ -32,61 +32,114 @@ const state = {
 
 let explorer = null;
 
+// The flat slice boards, wrapped in the same { element, update, destroy }
+// shape the spatial views use so the shell can dock any of them alike.
+function buildSlices(pos) {
+  const root = document.createElement('div');
+  root.className = 'explorer-slices';
+  // Every board at once: shape[2] layers of each of shape[3] cubes, each
+  // labelled with the address its squares carry. No cube picker, because
+  // nothing is hidden any more.
+  root.append(renderBoard(pos, {
+    selected: state.selected, targets: new Map(), checkIndex: null, lastMove: null, onSquare,
+  }));
+  return {
+    element: root,
+    update(selected) {
+      for (const cell of root.querySelectorAll('.cell')) {
+        const on = Number(cell.dataset.index) === selected;
+        cell.classList.toggle('selected', on);
+        cell.setAttribute('aria-pressed', String(on));
+      }
+    },
+  };
+}
+
 function refreshExplorer(pos) {
   if (explorer?.position !== pos) {
-    explorer?.viewer.destroy();
-    explorer?.cubeGrid?.destroy();
-    explorer?.unwrap?.destroy();
-    const slices = document.createElement('div');
-    slices.className = 'explorer-slices';
-    let cubeSelect = null;
-    if (pos.dims === 4) {
-      const label = document.createElement('label');
-      label.className = 'slice-cube-picker';
-      label.textContent = '2D slices of cube ';
-      cubeSelect = document.createElement('select');
-      cubeSelect.setAttribute('aria-label', 'Slice cube');
-      for (let w = 0; w < pos.shape[3]; w++) cubeSelect.add(new Option(`w = ${w + 1}`, String(w)));
-      label.append(cubeSelect); slices.append(label);
-    }
-    const sliceBoards = document.createElement('div');
-    slices.append(sliceBoards);
-    const showCube = w => {
-      sliceBoards.replaceChildren(renderBoard(pos, { selected: state.selected, targets: new Map(), checkIndex: null, lastMove: null, onSquare, ...(pos.dims === 4 ? { wLayer: w } : {}) }));
-      if (cubeSelect) cubeSelect.value = String(w);
-    };
-    showCube(0);
-    cubeSelect?.addEventListener('change', () => { showCube(Number(cubeSelect.value)); });
+    explorer?.destroy();
+
     const viewer = createSpatialView(pos, onSquare, glyphFor);
-    const layout = document.createElement('div');
-    let cubeGrid = null;
-    let unwrap = null;
+    const shell = document.createElement('div');
+    shell.className = 'explorer-shell';
+    const main = document.createElement('div');
+    main.className = 'explorer-main';
+    main.append(viewer.element);
+    const side = document.createElement('aside');
+    side.className = 'explorer-side';
+    side.hidden = true;
+    shell.append(main, side);
+
+    const defs = [];
     if (pos.dims === 4) {
-      // Master tesseract first, then the eight cubes it decomposes into,
-      // then the flat slices of whichever cube is selected.
-      cubeGrid = createCubeGrid(pos, onSquare, glyphFor);
-      unwrap = createUnwrapView(pos, onSquare);
-      layout.className = 'cube-explorer-4d';
-      layout.append(viewer.element, cubeGrid.element, unwrap.element, slices);
-    } else {
-      layout.className = 'cube-explorer';
-      layout.append(slices, viewer.element);
+      defs.push({ id: 'cells', label: 'Cells', make: () => createCubeGrid(pos, onSquare, glyphFor) });
+      defs.push({ id: 'net', label: 'Net', make: () => createUnwrapView(pos, onSquare) });
     }
-    els.boardArea.replaceChildren(layout);
-    explorer = { position: pos, viewer, cubeGrid, unwrap, slices, cubeSelect, showCube };
+    defs.push({ id: 'slices', label: 'Slices', make: () => buildSlices(pos) });
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'explorer-toolbar';
+    const open = new Set();
+    const built = new Map();
+
+    const sync = () => {
+      side.hidden = open.size === 0;
+      for (const def of defs) {
+        built.get(def.id)?.wrap.toggleAttribute('hidden', !open.has(def.id));
+        def.button.setAttribute('aria-pressed', String(open.has(def.id)));
+      }
+    };
+
+    for (const def of defs) {
+      const button = document.createElement('button');
+      button.textContent = def.label;
+      def.button = button;
+      button.addEventListener('click', () => {
+        if (open.has(def.id)) {
+          open.delete(def.id);
+        } else {
+          open.add(def.id);
+          // Panels are built the first time they are opened, so the default
+          // full-width view costs one WebGL context rather than three.
+          if (!built.has(def.id)) {
+            const view = def.make();
+            const wrap = document.createElement('section');
+            wrap.className = 'side-panel';
+            wrap.append(view.element);
+            side.append(wrap);
+            built.set(def.id, { view, wrap });
+            view.update?.(state.selected);
+          }
+        }
+        sync();
+      });
+      toolbar.append(button);
+    }
+
+    const expand = document.createElement('button');
+    expand.className = 'explorer-expand';
+    expand.textContent = 'Fullscreen';
+    expand.addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else shell.requestFullscreen?.();
+    });
+    toolbar.append(expand);
+
+    sync();
+    els.boardArea.replaceChildren(toolbar, shell);
+    explorer = {
+      position: pos,
+      update(selected) {
+        viewer.update(selected);
+        for (const { view } of built.values()) view.update?.(selected);
+      },
+      destroy() {
+        viewer.destroy();
+        for (const { view } of built.values()) view.destroy?.();
+      },
+    };
   }
-  if (state.selected !== null && explorer.cubeSelect) {
-    const w = pos.coord(state.selected)[3];
-    if (Number(explorer.cubeSelect.value) !== w) explorer.showCube(w);
-  }
-  for (const cell of explorer.slices.querySelectorAll('.cell')) {
-    const selected = Number(cell.dataset.index) === state.selected;
-    cell.classList.toggle('selected', selected);
-    cell.setAttribute('aria-pressed', String(selected));
-  }
-  explorer.viewer.update(state.selected);
-  explorer.cubeGrid?.update(state.selected);
-  explorer.unwrap?.update(state.selected);
+  explorer.update(state.selected);
   els.status.textContent = `${pos.dims}D position explorer`;
   els.blurb.textContent = VARIANTS[state.variantId].blurb;
   els.reset.textContent = 'Reset position';

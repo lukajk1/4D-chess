@@ -1,5 +1,5 @@
 import { toCoord } from '../core/position.js';
-import { squareName } from '../core/notation.js';
+import { squareName, layerName, cellName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 
 const GLYPHS = {
@@ -49,7 +49,8 @@ function renderSlices(pos, view) {
     if (pos.dims === 4) {
       const heading = document.createElement('h2');
       heading.className = 'axis-heading';
-      heading.textContent = `w = ${w + 1}`;
+      // Cube i is the interior cell, the highest numeral the outer one.
+      heading.textContent = `cube ${cellName(w)} · w = ${w + 1}`;
       group.append(heading);
     }
     const slices = document.createElement('div');
@@ -58,7 +59,13 @@ function renderSlices(pos, view) {
       const slice = document.createElement('div');
       slice.className = 'slice';
       const label = document.createElement('h3');
-      label.textContent = pos.variant?.inspectionOnly ? `Layer ${z + 1}${pos.variant?.royalLayers?.includes(z) ? ' · King & queen' : ''}` : `z = ${z + 1}`;
+      // Label each board with the address its squares carry: the cell and
+      // layer prefixes, so iαa1 is plainly the a1 of the board marked iα.
+      const address = pos.dims === 4 ? `${cellName(w)}${layerName(z)}`
+        : pos.dims === 3 ? layerName(z)
+        : `z = ${z + 1}`;
+      label.textContent = address + (pos.variant?.royalLayers?.includes(z) ? ' · K&Q' : '');
+      label.title = pos.dims === 4 ? `cube ${cellName(w)}, layer ${layerName(z)} — w ${w + 1}, z ${z + 1}` : `layer ${z + 1}`;
       slice.append(label, renderPlane(pos, view, pos.dims === 4 ? [z, w] : [z]), renderCoordinates(pos));
       slices.append(slice);
     }
