@@ -48,7 +48,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
-      ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
+      ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
       ${is4D ? `<div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">

@@ -367,7 +367,6 @@ dialog::backdrop { background: #0007; }
 .explorer-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .explorer-toolbar button { font-size: 13px; min-height: 34px; padding: 6px 13px; }
 .explorer-toolbar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-.explorer-toolbar .explorer-expand { margin-left: auto; }
 
 .explorer-shell { display: flex; gap: 20px; align-items: stretch; height: calc(100vh - 200px); min-height: 420px; }
 .explorer-main { flex: 1; min-width: 0; display: flex; }
@@ -383,7 +382,6 @@ dialog::backdrop { background: #0007; }
 .explorer-side .unwrap-canvas { height: 300px; min-height: 0; }
 .explorer-side .cube-view { position: static; }
 
-.explorer-shell:fullscreen { height: 100vh; padding: 16px; background: var(--bg); }
 
 @media (max-width: 900px) {
   .explorer-shell { flex-direction: column; height: auto; }
@@ -469,3 +467,17 @@ dialog::backdrop { background: #0007; }
 .fold-value { font: 11px ui-monospace, monospace; color: var(--ink); }
 .control-label { display: flex; align-items: baseline; gap: 6px; }
 .fold-slider { width: 100%; padding: 0; accent-color: var(--accent); }
+
+/* The column rule stacks label above control, which is wrong for a checkbox
+   and its text. Needs the element qualifier to outrank `> label`, and an
+   explicit width so `align-items: stretch` cannot blow the box up. */
+.explorer-controls .cube-controls > label.piece-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.explorer-controls .cube-controls > label.piece-toggle input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}

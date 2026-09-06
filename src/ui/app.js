@@ -127,22 +127,14 @@ function refreshExplorer(pos) {
       toolbar.append(button);
     }
 
-    const expand = document.createElement('button');
-    expand.className = 'explorer-expand';
-    expand.textContent = 'Fullscreen';
-    expand.addEventListener('click', () => {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else shell.requestFullscreen?.();
-    });
-    // Fold the panel toggles, the view's own reset and fullscreen into the
-    // viewer's control strip and drop its heading, so the explorer reads as
-    // one surface instead of a card inside a toolbar inside a page.
+    // Fold the panel toggles and the view's own reset into the viewer's
+    // control strip and drop its heading, so the explorer reads as one
+    // surface instead of a card inside a toolbar inside a page.
     const controls = viewer.element.querySelector('.cube-controls');
     const heading = viewer.element.querySelector('.cube-heading');
     const resetView = heading?.querySelector('.reset-camera');
     heading?.remove();
     if (resetView) toolbar.append(resetView);
-    toolbar.append(expand);
     if (controls) {
       controls.append(toolbar);
       controlsPanel.append(controls);
