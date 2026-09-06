@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { envelope } from '../core/movegen.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { createModelPieces } from './model-pieces.js';
@@ -7,7 +8,7 @@ import { loadSkybox } from './skybox.js';
 import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, brighten, POINT_VERTEX, POINT_FRAGMENT,
-  LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
+  LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, HALO_FRAGMENT, buildGlyphAtlas,
 } from './gl-shared.js';
 
 // WebGL viewer for the lattice. The 4D -> 3D projection stays here in JS
@@ -47,11 +48,13 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
+      ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
       ${pieceCount ? segmented('Pieces', 'Piece rendering', [['meshes', '3D'], ['glyphs', 'Glyphs']], 'meshes') : ''}
+      ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
       ${is4D ? `<div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
@@ -76,8 +79,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     legend.hidden = true;
     root.append(legend);
     const explanation = document.createElement('p');
-    explanation.className = 'hint';
-    explanation.textContent = `Radius carries w: the w = 1 cell is the inner cube, w = ${pos.shape[3]} the outer. Colour carries the angular sector, so a wedge shares its colour with the face of the inner cube it grows from — that is where each of the six remaining cells lives. Points on no cell stay faint.`;
+    explanation.className = 'hint w-explain';
     root.append(explanation);
   }
 
@@ -148,6 +150,15 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   }
   const slotCount = slots.length;
   const slotLattice = new Int32Array(slots.map((slot) => slot.lattice));
+  // One representative copy per square, picked the way a piece picks its home
+  // cube, so a move highlight lands where that square's model would stand
+  // rather than being drawn once per cell that shares the point.
+  const homeSlotOf = new Int32Array(count).fill(-1);
+  slots.forEach((slot, s) => {
+    const current = homeSlotOf[slot.lattice];
+    const better = current < 0 || (slot.cell?.axis === 3 && slots[current].cell?.axis !== 3);
+    if (better) homeSlotOf[slot.lattice] = s;
+  });
 
   const positions = new Float32Array(slotCount * 3);
   const pointColors = new Float32Array(slotCount * 3);
@@ -231,6 +242,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // A coordinate axis belongs to three independent planes in 4D. Rotating in
   // all three planes containing z gives the point cloud a true 4D motion: XZ
   // and YZ turn its spatial silhouette while ZW changes apparent 4D depth.
+  let wMode = 'nested';
+
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
   const rotationAngles = new Float64Array(3);
   const rotationSpeeds = [.11, -.083, .14];
@@ -249,9 +262,26 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     return rotated4;
   }
 
+  // An oblique parallel projection of the tesseract: w becomes a fixed
+  // direction rather than a scale, so every cell keeps its true size and the
+  // w-extreme cubes sit corner to corner, joined by the slanted edges that make
+  // the familiar drawing. The offset is a little over half a square per w step
+  // -- the cabinet convention. Cavalier, at a full square per step, smears an
+  // 8-wide board past the point of reading.
+  const OBLIQUE_DIR = ((v) => v.map((k) => k / Math.hypot(...v)))([1, .85, 1]);
+  const OBLIQUE_STEP = is4D ? .58 * pos.shape[0] / Math.max(1, pos.shape[3] - 1) : 0;
+
   // Project a 4D point for a given camera, scale and spacing. Returns wScale.
   function projectAt(c, K, g, sp, out) {
     const q = is4D ? rotateThroughZPlanes(c) : c;
+    if (is4D && wMode === 'oblique') {
+      const dw = (q[3] - center[3]) * OBLIQUE_STEP;
+      out[0] = ((q[0] - center[0]) + dw * OBLIQUE_DIR[0]) * g;
+      out[1] = ((q[2] - center[2]) * sp + dw * OBLIQUE_DIR[1]) * g;
+      out[2] = (-(q[1] - center[1]) + dw * OBLIQUE_DIR[2]) * g;
+      // A parallel projection has no foreshortening, so nothing scales with w.
+      return 1;
+    }
     const ws = wScaleAt(q[3], K);
     out[0] = (q[0] - center[0]) * ws * g;
     out[1] = (q[2] - center[2]) * sp * ws * g;
@@ -284,7 +314,12 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     });
     slots.forEach((slot, s) => { if (slot.cell) slotCell[s] = cells.indexOf(slot.cell); });
 
-    // Size the fully open net against the folded footprint.
+    measureNet();
+  }
+
+  // Size the fully open net against the folded footprint. The two projections
+  // give the net different extents, so this is remeasured when one is chosen.
+  function measureNet() {
     const full = cells.map(() => Math.PI / 2);
     const lo = [Infinity, Infinity, Infinity];
     const hi = [-Infinity, -Infinity, -Infinity];
@@ -479,7 +514,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   haloGeometry.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(HALO_MAX).fill(basePointSize * 3.4), 1));
   const halo = new THREE.Points(haloGeometry, new THREE.ShaderMaterial({
     vertexShader: POINT_VERTEX,
-    fragmentShader: POINT_FRAGMENT,
+    fragmentShader: HALO_FRAGMENT,
     transparent: true,
     depthWrite: false,
     depthTest: false,
@@ -490,8 +525,101 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   halo.visible = false;
   scene.add(halo);
 
+  // ---- move envelope, drawn as the cells a piece could reach
+  // A lattice point is the middle of a cell's floor -- it is where a piece model
+  // stands -- so a cell runs half a square either side in x and y and a whole
+  // layer upward in z. Corners are fractional board coordinates pushed through
+  // the same projection as the lattice itself, so the boxes fold, unfold, rotate
+  // and take the w perspective along with everything else.
+  const HIGHLIGHT_MAX = 420;
+  const CUBE_CORNERS = [];
+  for (let bits = 0; bits < 8; bits++) {
+    CUBE_CORNERS.push([bits & 1 ? .5 : -.5, bits & 2 ? .5 : -.5, bits & 4 ? 1 : 0, 0]);
+  }
+  const CUBE_EDGES = [];
+  for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) {
+    if (((a ^ b) & ((a ^ b) - 1)) === 0) CUBE_EDGES.push(a, b);   // differ in one bit
+  }
+  const CUBE_FACES = [];
+  for (let axis = 0; axis < 3; axis++) {
+    const bit = 1 << axis;
+    const [u, v] = [0, 1, 2].filter((k) => k !== axis).map((k) => 1 << k);
+    for (const side of [0, bit]) CUBE_FACES.push(side, side | u, side | u | v, side, side | u | v, side | v);
+  }
+
+  const highlightCorners = new Float32Array(HIGHLIGHT_MAX * 8 * 3);
+  const highlightAlpha = new THREE.BufferAttribute(new Float32Array(HIGHLIGHT_MAX * 8).fill(1), 1);
+  const highlightPosition = new THREE.BufferAttribute(highlightCorners, 3);
+  const indexFor = (pattern) => {
+    const out = new Uint16Array(HIGHLIGHT_MAX * pattern.length);
+    for (let i = 0; i < HIGHLIGHT_MAX; i++) {
+      for (let k = 0; k < pattern.length; k++) out[i * pattern.length + k] = i * 8 + pattern[k];
+    }
+    return new THREE.BufferAttribute(out, 1);
+  };
+  // Wire and fill share one set of corners and differ only in how they are
+  // indexed, so a single position update moves both.
+  const highlightGeometry = new THREE.BufferGeometry();
+  highlightGeometry.setAttribute('position', highlightPosition);
+  highlightGeometry.setAttribute('aAlpha', highlightAlpha);
+  highlightGeometry.setIndex(indexFor(CUBE_EDGES));
+  const highlightFillGeometry = new THREE.BufferGeometry();
+  highlightFillGeometry.setAttribute('position', highlightPosition);
+  highlightFillGeometry.setAttribute('aAlpha', highlightAlpha);
+  highlightFillGeometry.setIndex(indexFor(CUBE_FACES));
+
+  const highlightMaterial = new THREE.ShaderMaterial({
+    vertexShader: LINE_VERTEX,
+    fragmentShader: LINE_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    uniforms: { uColor: { value: new THREE.Color(theme.accent) }, uFade: { value: .85 } },
+  });
+  // Faint enough that a queen's two hundred cells do not fog the lattice; the
+  // wire carries the read, the fill only says which side of it is inside.
+  const highlightFillMaterial = new THREE.ShaderMaterial({
+    vertexShader: LINE_VERTEX,
+    fragmentShader: LINE_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: { uColor: { value: new THREE.Color(theme.accent) }, uFade: { value: .1 } },
+  });
+  const highlightWire = new THREE.LineSegments(highlightGeometry, highlightMaterial);
+  const highlightFill = new THREE.Mesh(highlightFillGeometry, highlightFillMaterial);
+
+  // The lighter reading of the same information: ring the reachable points
+  // instead of boxing the cells around them. Same ring the selection uses, in
+  // the accent colour and a size below it, so the two never compete. Unlike the
+  // halo these are depth-tested -- a couple of hundred markers floating over
+  // everything would say nothing about where they are.
+  const markerGeometry = new THREE.BufferGeometry();
+  markerGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HIGHLIGHT_MAX * 3), 3));
+  const markerColors = new Float32Array(HIGHLIGHT_MAX * 3);
+  for (let i = 0; i < HIGHLIGHT_MAX; i++) markerColors.set([...new THREE.Color(theme.accent)], i * 3);
+  markerGeometry.setAttribute('aColor', new THREE.BufferAttribute(markerColors, 3));
+  markerGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(HIGHLIGHT_MAX), 1));
+  markerGeometry.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(HIGHLIGHT_MAX), 1));
+  const markerMaterial = new THREE.ShaderMaterial({
+    vertexShader: POINT_VERTEX,
+    fragmentShader: HALO_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    uniforms: pointUniforms,
+  });
+  const markers = new THREE.Points(markerGeometry, markerMaterial);
+
+  for (const object of [highlightWire, highlightFill, markers]) {
+    object.frustumCulled = false;
+    object.renderOrder = 3;
+    object.visible = false;
+    scene.add(object);
+  }
+
   // ---- state
   let spacing = 1;
+  let targets = [];
+  let reachMode = 'points';
   let unfoldT = 0;
   let unfoldTarget = 0;
   let colourMode = 'board';
@@ -581,6 +709,9 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     const g = 1 + (fitScale - 1) * open;
     const shift = netMid.map((v) => v * g * open);
     for (let ci = 0; ci < angles.length; ci++) angles[ci] = angleAt(t, ci);
+    lastK = K;
+    lastG = g;
+    lastShift = shift;
 
     for (let s = 0; s < slotCount; s++) {
       const c = coords[slotLattice[s]];
@@ -620,7 +751,66 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       pieceMesh.geometry.attributes.aAlpha.needsUpdate = true;
     }
     if (is4D) writeCellFrame(K, g, shift);
+    writeHighlights();
     syncHalo();
+  }
+
+  let lastK = K_FOLDED;
+  let lastG = 1;
+  let lastShift = [0, 0, 0];
+  const cornerCoord = [0, 0, 0, 0];
+
+  const shownTargets = [];
+
+  function writeHighlights() {
+    // A target in a hidden layer or a filtered-out cell is not shown, whichever
+    // reading is on, so the two always agree on what is being pointed at.
+    shownTargets.length = 0;
+    for (const lattice of targets) {
+      const s = homeSlotOf[lattice];
+      if (s >= 0 && visible(s) && shownTargets.length < HIGHLIGHT_MAX) shownTargets.push(lattice);
+    }
+    const n = shownTargets.length;
+    const boxes = reachMode === 'cubes' && n > 0;
+    highlightWire.visible = highlightFill.visible = boxes;
+    markers.visible = reachMode === 'points' && n > 0;
+    if (!n) return;
+
+    if (!boxes) {
+      const where = markerGeometry.attributes.position.array;
+      const alpha = markerGeometry.attributes.aAlpha.array;
+      const size = markerGeometry.attributes.aSize.array;
+      alpha.fill(0);
+      shownTargets.forEach((lattice, i) => {
+        const s = homeSlotOf[lattice];
+        where.set(positions.subarray(s * 3, s * 3 + 3), i * 3);
+        alpha[i] = .9;
+        // Tracks the point it rings, so it shrinks with distance in w too.
+        size[i] = pointSize[s] * 2.6;
+      });
+      markerGeometry.attributes.position.needsUpdate = true;
+      markerGeometry.attributes.aAlpha.needsUpdate = true;
+      markerGeometry.attributes.aSize.needsUpdate = true;
+      return;
+    }
+
+    shownTargets.forEach((lattice, i) => {
+      const c = coords[lattice];
+      const ci = slotCell[homeSlotOf[lattice]];
+      for (let k = 0; k < 8; k++) {
+        for (let a = 0; a < 4; a++) cornerCoord[a] = (c[a] ?? 0) + CUBE_CORNERS[k][a];
+        // A cell that has swung away carries its boxes with it.
+        const q = ci >= 0 ? unfoldCoord(cornerCoord, ci, hinges, angles, coord4) : cornerCoord;
+        projectAt(q, lastK, lastG, spacing, proj);
+        const at = (i * 8 + k) * 3;
+        highlightCorners[at] = proj[0] - lastShift[0];
+        highlightCorners[at + 1] = proj[1] - lastShift[1];
+        highlightCorners[at + 2] = proj[2] - lastShift[2];
+      }
+    });
+    highlightGeometry.setDrawRange(0, n * CUBE_EDGES.length);
+    highlightFillGeometry.setDrawRange(0, n * CUBE_FACES.length);
+    highlightPosition.needsUpdate = true;
   }
 
   function rebuildPositions() {
@@ -800,6 +990,27 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   }
 
   onSegment('Projection', setCamera);
+  onSegment('Hyperprojection', (value) => {
+    wMode = value;
+    measureNet();
+    syncExplanation();
+    rebuildPositions();
+  });
+
+  function syncExplanation() {
+    const note = root.querySelector('.w-explain');
+    if (!note) return;
+    const sectors = 'Colour carries the angular sector, so a wedge shares its colour with the face of the inner cube it grows from — that is where each of the six remaining cells lives.';
+    note.textContent = wMode === 'oblique'
+      ? `Direction carries w: every w layer is the same cube, stepped along one fixed diagonal, so the w = 1 and w = ${pos.shape[3]} cells sit corner to corner joined by slanted edges. A parallel projection has no foreshortening, so all eight cells keep their true size. Points on no cell stay faint.`
+      : `Radius carries w: the w = 1 cell is the inner cube, w = ${pos.shape[3]} the outer. ${sectors} Points on no cell stay faint.`;
+  }
+  syncExplanation();
+  onSegment('Move highlight', (value) => {
+    reachMode = value;
+    writeHighlights();
+    needsRender = true;
+  });
   const layerSelect = root.querySelector('[aria-label="Visible layer"]');
   const cellSelect = root.querySelector('[aria-label="Visible cell"]');
   layerSelect?.addEventListener('change', () => {
@@ -970,7 +1181,10 @@ export function createSpatialView(pos, onSelect, glyphFor) {
         }
       }
       modelPieces.setHighlight(selected);
-      syncHalo();
+      // Occupancy is deliberately ignored: rays run to the edge, so this is
+      // the piece's reach on an empty board rather than its legal moves.
+      targets = selected === null ? [] : envelope(pos, selected);
+      writeSlotPositions();
       const piece = selected === null ? null : pos.get(selected);
       caption.textContent = selected === null
         ? `${count.toLocaleString()} positions · ${pieceCount} pieces${is4D
@@ -988,6 +1202,12 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       pointGeometry.dispose();
       edgeGeometry.dispose();
       haloGeometry.dispose();
+      highlightGeometry.dispose();
+      highlightFillGeometry.dispose();
+      markerGeometry.dispose();
+      markerMaterial.dispose();
+      highlightMaterial.dispose();
+      highlightFillMaterial.dispose();
       pointMaterial.dispose();
       edgeMaterial.dispose();
       halo.material.dispose();

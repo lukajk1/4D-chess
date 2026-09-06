@@ -94,6 +94,43 @@ function castlingMoves(pos, color, out) {
   }
 }
 
+// Every square a piece could reach on an otherwise empty board: rays run to
+// the edge instead of stopping at the first occupant, and nothing is checked
+// for legality. This is the shape of a piece's reach rather than a list of its
+// moves, which is what the spatial viewer highlights while 3D and 4D remain
+// inspection-only. Dimension-generic like the rest: a rook gets its 2d axis
+// rays, a queen its 3^d - 1, with no per-dimension code.
+export function envelope(pos, from) {
+  const piece = pos.get(from);
+  if (piece === null) return [];
+  const type = typeOf(piece);
+  const coord = toCoord(pos.shape, from);
+  const reached = new Set();
+  if (type === 'p') {
+    // A pawn is the one piece whose reach is not a vector list: its push and
+    // its captures go different ways, and both belong in the envelope.
+    const axis = forwardAxisOf(pos);
+    const direction = colorOf(piece) === WHITE ? 1 : -1;
+    const forward = new Array(pos.dims).fill(0);
+    forward[axis] = direction;
+    for (const vector of [forward, ...pawnCaptureVectors(pos.dims, axis, direction)]) {
+      const to = step(pos.shape, coord, vector);
+      if (to !== -1) reached.add(to);
+    }
+    return [...reached];
+  }
+  const sliding = modeOf(type) === 'slide';
+  for (const vector of vectorsFor(type, pos.dims)) {
+    for (let distance = 1; ; distance++) {
+      const to = step(pos.shape, coord, vector, distance);
+      if (to === -1) break;
+      reached.add(to);
+      if (!sliding) break;
+    }
+  }
+  return [...reached];
+}
+
 // Pseudo-legal: does not yet test whether the mover leaves their own king exposed.
 export function pseudoMoves(pos, color = pos.turn) {
   const out = [];

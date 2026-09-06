@@ -57,6 +57,7 @@ export const readTheme = () => {
     dark: pick('--dark-square', '#9aa88f'),
     muted: pick('--muted', '#6b7480'),
     selected: pick('--selected', '#e8c27d'),
+    accent: pick('--accent', '#6ba585'),
   };
 };
 
@@ -112,6 +113,19 @@ export const POINT_FRAGMENT = `
     // Ambient stays high so an unlit face keeps its board colour readable.
     vec3 shaded = vColor * (0.45 + 0.55 * diffuse) + vec3(spec * 0.12);
     gl_FragColor = vec4(shaded, vAlpha * (1.0 - smoothstep(0.82, 1.0, r2)));
+  }`;
+
+// The selection marker for an empty point. A ring rather than a disc, so
+// the point it marks stays visible inside it instead of being painted over.
+export const HALO_FRAGMENT = `
+  varying vec3 vColor;
+  varying float vAlpha;
+  void main() {
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float r = length(p);
+    float ring = smoothstep(0.58, 0.70, r) * (1.0 - smoothstep(0.88, 1.0, r));
+    if (ring < 0.01) discard;
+    gl_FragColor = vec4(vColor, vAlpha * ring);
   }`;
 
 export const LINE_VERTEX = `

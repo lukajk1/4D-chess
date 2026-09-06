@@ -92,14 +92,15 @@ they never need separators:
 | 1D | `e` | file |
 | 2D | `e4` | file, rank |
 | 3D | `γe4` | layer γ (the third board), e4 |
-| 4D | `ivγe4` | cell iv, layer γ, e4 |
+| 4D | `Dγe4` | cell D, layer γ, e4 |
 
-Roman numerals count w, so `i` is the interior cube and the highest numeral the
-outer one — the first and last cells of the tesseract. Greek letters count z,
-so `α` is the first board in the stack. Each level of the hierarchy uses a
-distinct character class (Roman, Greek, Latin, digits), which is what lets
-`ivγe4` parse without any punctuation. Lowercase Roman is safe because files
-only ever run a–h, so `i`, `v` and `x` can't be mistaken for a file.
+Capitals count w, so `A` is the interior cube and the last letter the outer one
+— the first and last cells of the tesseract. Greek letters count z, so `α` is
+the first board in the stack. Each level of the hierarchy uses a distinct
+character class (capitals, Greek, lowercase, digits), which is what lets `Dγe4`
+parse without any punctuation. Capitals stay clear of the lowercase files
+however wide the board gets, and one character per cell keeps every square name
+the same length.
 
 In 4D the armies sit in the two w-extreme cells: white's half of the 3D setup in
 the interior cube (w = 1), black's in the outer cube (w = n), facing each other
@@ -132,6 +133,16 @@ src/ui/board.js        1D/2D boards and n-D slice grids
 src/ui/spatial-gl.js   WebGL lattice viewer (three.js)
 ```
 
+The **4D -> 3D** control picks how w reaches three dimensions. *Nested* is a
+Schlegel diagram: w becomes distance from a 4D camera on the w axis, so the
+cells nest and radius carries w. *Oblique* is a parallel projection: w becomes a
+fixed diagonal offset, so every cell keeps its true size and the w-extreme cubes
+sit corner to corner joined by slanted edges -- the drawing most people picture
+when they picture a tesseract. The step is a little over half a square per w,
+the cabinet convention; cavalier, at a full square, smears an 8-wide board past
+reading. It is a separate control from the 3D camera because the choices are
+independent: either 4D projection can be viewed through either camera.
+
 `src/core` has no DOM dependency, no three.js dependency, and runs under plain
 Node. The 4D -> 3D projection lives in the viewer, not the engine: three.js is
 only ever handed 3D coordinates.
@@ -150,6 +161,22 @@ slices or a projection, which is a UI problem, not an engine one.
 3D (8x8x8, 512 positions) and 4D (8x8x8x8, 4,096 positions) exist as position
 explorers only: the lattice renders and every square is inspectable, but pieces
 do not move there yet.
+
+Selecting a piece draws its **envelope** -- every cell it could reach on an
+empty board. `envelope()` in `movegen.js` deliberately ignores occupancy: rays
+run to the edge rather than stopping at the first piece, so this is the shape
+of a piece's reach, not a list of its legal moves. It is dimension-generic like
+everything else, so a 4D rook gets its 8 axis rays and a queen its 80. The
+largest envelope on any board here is a centred 8-cube queen at 255 cells.
+
+A cell is drawn as a box rather than a marked point, because a lattice point is
+the middle of a cell's floor -- it is where a piece model stands -- so the box
+runs half a square either side in x and y and a whole layer upward in z. Its
+corners are fractional board coordinates pushed through the same projection as
+the lattice, so the boxes fold, unfold, rotate and take the w perspective along
+with it. A **Reach** toggle switches that box for a ring on the point itself,
+which stays legible where a couple of hundred boxes merge into one mass.
+Selecting an empty point rings it too, in the selection colour a size up.
 
 ### Why the viewer is WebGL
 
