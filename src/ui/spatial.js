@@ -20,8 +20,9 @@ export function createSpatialView(pos, onSelect) {
       <label>Layer <select aria-label="Visible layer"><option value="all">All 8 layers</option>${pos.shape[2] ? Array.from({length: pos.shape[2]}, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('') : ''}</select></label>
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       <label class="piece-toggle"><input type="checkbox" checked> Pieces</label>
+      <output class="zoom-level" aria-label="Zoom level">100%</output>
     </div>`;
-  const svg = svgElement('svg', { viewBox: '0 0 720 720', class: 'cube-svg', tabindex: '0', role: 'group', 'aria-label': '3D chess lattice. Drag to rotate; arrow keys rotate; Home resets the view. Click a point to inspect.' });
+  const svg = svgElement('svg', { viewBox: '0 0 720 720', class: 'cube-svg', tabindex: '0', role: 'group', 'aria-label': '3D chess lattice. Drag to rotate; scroll or use plus and minus to zoom; arrow keys rotate; Home resets the view. Click a point to inspect.' });
   const title = svgElement('title');
   title.textContent = '512 positions on eight stacked chessboards';
   const wire = svgElement('g', { class: 'cube-wire', 'pointer-events': 'none' });
@@ -34,11 +35,12 @@ export function createSpatialView(pos, onSelect) {
   caption.setAttribute('aria-live', 'polite');
   const help = document.createElement('p');
   help.className = 'hint';
-  help.textContent = 'Drag to orbit · Arrow keys to rotate · Click a point or square to inspect. Pieces stay in place.';
+  help.textContent = 'Drag to orbit · Scroll or + / − to zoom · Click a point or square to inspect. Pieces stay in place.';
   root.append(caption, help);
 
   let yaw = -.55, pitch = .48, spacing = 1, layer = null, selected = null;
   let projection = 'orthographic';
+  let zoom = 1;
   let showPieces = true, frame = 0, gesture = null, disposed = false;
   const center = pos.shape.map(n => (n - 1) / 2);
   const coords = pos.squares.map((_, i) => pos.coord(i));
@@ -92,7 +94,7 @@ export function createSpatialView(pos, onSelect) {
     const projectRotated = p => {
       // A pinhole camera looking toward the origin; positive depth is nearer.
       // Orthographic projection simply drops depth. Both agree at the origin.
-      const magnification = projection === 'perspective' ? cameraDistance / (cameraDistance - p.depth) : 1;
+      const magnification = zoom * (projection === 'perspective' ? cameraDistance / (cameraDistance - p.depth) : 1);
       return { x: 360 + p.x * scale * magnification, y: 350 - p.y * scale * magnification, magnification };
     };
     const project = c => projectRotated(rotate(c));
@@ -123,7 +125,21 @@ export function createSpatialView(pos, onSelect) {
     });
   }
   function schedule() { if (!frame && !disposed) frame = requestAnimationFrame(draw); }
-  function reset() { yaw = -.55; pitch = .48; schedule(); }
+  function setZoom(value) {
+    zoom = Math.max(.4, Math.min(4, value));
+    root.querySelector('.zoom-level').textContent = `${Math.round(zoom * 100)}%`;
+    schedule();
+  }
+  function reset() { yaw = -.55; pitch = .48; setZoom(1); }
+  svg.addEventListener('wheel', event => {
+    // Keep browser-level Ctrl+wheel zoom available. Ordinary wheel scrolling
+    // belongs to this viewport, including when its zoom limit is reached.
+    if (event.ctrlKey) return;
+    event.preventDefault();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? svg.clientHeight : 1;
+    const delta = Math.max(-160, Math.min(160, event.deltaY * unit));
+    setZoom(zoom * Math.exp(-delta * .002));
+  }, { passive: false });
   svg.addEventListener('pointerdown', event => {
     if (event.button !== 0 || gesture) return;
     gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false, index: event.target.closest('[data-index]')?.dataset.index };
@@ -149,6 +165,11 @@ export function createSpatialView(pos, onSelect) {
   svg.addEventListener('pointercancel', () => { gesture = null; });
   svg.addEventListener('lostpointercapture', () => { gesture = null; });
   svg.addEventListener('keydown', event => {
+    if (['+', '=', '-', '_'].includes(event.key)) {
+      event.preventDefault();
+      setZoom(zoom * (event.key === '+' || event.key === '=' ? 1.15 : 1 / 1.15));
+      return;
+    }
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Home') return reset();
