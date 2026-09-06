@@ -163,7 +163,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       scene.add(pieceMesh);
     }
 
-    const halo = makePointCloud(1, pointUniforms);
+    const halo = makePointCloud(1, pointUniforms, { depthWrite: false });
     halo.geometry.attributes.aColor.array.set([...new THREE.Color(theme.selected)]);
     halo.geometry.attributes.aSize.array[0] = 0.52;
     halo.geometry.attributes.aAlpha.array[0] = 0.9;

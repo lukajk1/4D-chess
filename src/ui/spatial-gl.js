@@ -240,16 +240,31 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   pointGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(pointAlpha, 1));
   pointGeometry.setAttribute('aSize', new THREE.BufferAttribute(pointSize, 1));
 
+  // Two passes over one buffer: solid points write depth so nearer ones hide
+  // farther ones, then faint points blend on top without occluding. Without
+  // this the GPU paints in buffer order and back points land over front ones.
+  const pointUniforms = { uHalfHeight: { value: 300 }, uPerspective: { value: 0 }, uSolidPass: { value: 1 } };
   const pointMaterial = new THREE.ShaderMaterial({
     vertexShader: POINT_VERTEX,
     fragmentShader: POINT_FRAGMENT,
     transparent: true,
-    depthWrite: false,
-    uniforms: { uHalfHeight: { value: 300 }, uPerspective: { value: 0 } },
+    depthWrite: true,
+    uniforms: pointUniforms,
   });
   const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
   pointCloud.renderOrder = 1;
   scene.add(pointCloud);
+
+  const faintMaterial = new THREE.ShaderMaterial({
+    vertexShader: POINT_VERTEX,
+    fragmentShader: POINT_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    uniforms: { ...pointUniforms, uSolidPass: { value: 0 } },
+  });
+  const faintCloud = new THREE.Points(pointGeometry, faintMaterial);
+  faintCloud.renderOrder = 2;
+  scene.add(faintCloud);
 
   // ---- wire edges, described as index pairs then filled each rebuild
   const edgePairs = [];

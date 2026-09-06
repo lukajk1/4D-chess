@@ -75,10 +75,18 @@ export const POINT_VERTEX = `
 export const POINT_FRAGMENT = `
   varying vec3 vColor;
   varying float vAlpha;
+  uniform float uSolidPass;
   void main() {
     // Round the square point sprite and feather its edge.
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
+    // Drawn in two passes over the same buffer. Solid points write depth, so
+    // a nearer point hides a farther one; faint points (dimmed interior,
+    // filtered out) blend over the result afterwards without occluding
+    // anything. Splitting here keeps it to two draw calls and no CPU sorting.
+    bool solid = vAlpha >= 0.5;
+    if (uSolidPass > 0.5 && !solid) discard;
+    if (uSolidPass < 0.5 && solid) discard;
     gl_FragColor = vec4(vColor, vAlpha * smoothstep(0.5, 0.42, d));
   }`;
 
@@ -117,6 +125,10 @@ export const PIECE_VERTEX = `
     // track the local lattice spacing, which the 4D perspective varies.
     vec4 mv = modelViewMatrix * vec4(aCenter, 1.0);
     mv.xy += position.xy * uSize * aScale;
+    // Nudge toward the camera: a sprite sits on a lattice point, and now that
+    // points write depth an equal-depth glyph would be punched out by its own
+    // point. View space looks down -z, so nearer is larger.
+    mv.z += 0.04;
     gl_Position = projectionMatrix * mv;
   }`;
 
@@ -176,7 +188,7 @@ export function buildGlyphAtlas(chars, glyphFor) {
 }
 
 // One point cloud plus its per-vertex colour, alpha and size buffers.
-export function makePointCloud(count, uniforms) {
+export function makePointCloud(count, uniforms, overrides = {}) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
   geometry.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
@@ -186,8 +198,11 @@ export function makePointCloud(count, uniforms) {
     vertexShader: POINT_VERTEX,
     fragmentShader: POINT_FRAGMENT,
     transparent: true,
-    depthWrite: false,
-    uniforms,
+    // Solid points occlude each other; callers drawing the faint pass, or
+    // markers meant to sit on top, turn this off.
+    depthWrite: true,
+    ...overrides,
+    uniforms: { uSolidPass: { value: 1 }, ...uniforms },
   });
   return { geometry, material, points: new THREE.Points(geometry, material) };
 }
