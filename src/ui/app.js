@@ -1,4 +1,5 @@
-import { legalMoves, makeMove, status, inCheck } from '../core/movegen.js';
+import { legalMoves, makeMove, status, inCheck, envelope, forwardAxisOf } from '../core/movegen.js';
+import { colorOf, typeOf, toCoord } from '../core/position.js';
 import { toFen, moveToText, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
@@ -53,11 +54,14 @@ function buildSlices(pos) {
   };
 }
 
-function refreshExplorer(pos) {
-  if (explorer?.position !== pos) {
+function refreshExplorer(pos, lastMove = null) {
+  if (!explorer || explorer.position !== pos) {
+    const prevCamera = explorer?.viewer?.getCameraState?.();
+    const prevOpen = explorer?.getOpen?.();
     explorer?.destroy();
 
-    const viewer = createSpatialView(pos, onSquare, glyphFor);
+    const viewer = createSpatialView(pos, onSquare, glyphFor, lastMove);
+    if (prevCamera) viewer.setCameraState(prevCamera);
     const shell = document.createElement('div');
     shell.className = 'explorer-shell';
     const main = document.createElement('div');
@@ -81,7 +85,7 @@ function refreshExplorer(pos) {
 
     const toolbar = document.createElement('div');
     toolbar.className = 'explorer-toolbar';
-    const open = new Set();
+    const open = new Set(prevOpen ?? []);
     const built = new Map();
 
     const sync = () => {
@@ -116,6 +120,15 @@ function refreshExplorer(pos) {
         sync();
       });
       toolbar.append(button);
+      if (open.has(def.id)) {
+        const view = def.make();
+        const wrap = document.createElement('section');
+        wrap.className = 'side-panel';
+        wrap.append(view.element);
+        side.append(wrap);
+        built.set(def.id, { view, wrap });
+        view.update?.(state.selected);
+      }
     }
 
     // Fold the panel toggles and the view's own reset into the viewer's
@@ -126,7 +139,7 @@ function refreshExplorer(pos) {
     const resetView = heading?.querySelector('.reset-camera');
     heading?.remove();
     if (resetView) toolbar.append(resetView);
-    // The header is only the variant picker now, so reset joins the controls.
+    toolbar.append(els.undo);
     toolbar.append(els.reset);
     if (controls) {
       controls.append(toolbar);
@@ -139,6 +152,8 @@ function refreshExplorer(pos) {
     els.boardArea.replaceChildren(shell);
     explorer = {
       position: pos,
+      viewer,
+      getOpen() { return Array.from(open); },
       update(selected) {
         viewer.update(selected);
         for (const { view } of built.values()) view.update?.(selected);
@@ -150,9 +165,11 @@ function refreshExplorer(pos) {
     };
   }
   explorer.update(state.selected);
-  els.status.textContent = `${pos.dims}D position explorer`;
+  els.status.textContent = `${pos.dims}D · ${pos.turn === 'w' ? 'White' : 'Black'} to move`;
   els.reset.textContent = 'Reset position';
   els.fen.value = toFen(pos);
+  els.undo.disabled = state.history.length === 0;
+  renderHistory();
 }
 
 function newGame(variantId = state.variantId) {
@@ -160,6 +177,7 @@ function newGame(variantId = state.variantId) {
   state.position = startPosition(variantId);
   state.history = [];
   state.selected = null;
+  state.animatingMove = null;
   refresh();
 }
 
@@ -170,7 +188,8 @@ function refresh() {
   document.body.classList.toggle('inspection', inspection);
   if (inspection) {
     state.moves = [];
-    refreshExplorer(pos);
+    refreshExplorer(pos, state.animatingMove ?? null);
+    state.animatingMove = null;
     return;
   }
   // The explorer owns several views now, so it tears itself down.
@@ -213,7 +232,12 @@ function refresh() {
   els.fen.value = toFen(pos);
   els.undo.disabled = state.history.length === 0;
   // 1D and 2D have no left control column, so reset sits beside undo.
-  els.undo.parentElement.append(els.reset);
+  const gameState = document.querySelector('.game-state');
+  if (gameState && !gameState.contains(els.undo)) {
+    gameState.append(els.undo, els.reset);
+  } else {
+    els.undo.parentElement?.append(els.reset);
+  }
   renderHistory();
 }
 
@@ -235,8 +259,31 @@ function renderHistory() {
 
 function onSquare(index) {
   const pos = state.position;
-  if (pos.variant?.inspectionOnly) {
-    state.selected = state.selected === index ? null : index;
+  const isSpatial = pos.dims > 2;
+
+  if (isSpatial) {
+    if (state.selected !== null) {
+      const targets = envelope(pos, state.selected);
+      if (targets.includes(index)) {
+        const piece = pos.get(state.selected);
+        const color = colorOf(piece);
+        const axis = forwardAxisOf(pos);
+        const lastRank = color === 'w' ? pos.shape[axis] - 1 : 0;
+        const isPawnPromotion = typeOf(piece) === 'p' && toCoord(pos.shape, index)[axis] === lastRank;
+        const move = {
+          from: state.selected,
+          to: index,
+          piece,
+          captured: pos.get(index),
+          promotion: isPawnPromotion ? 'q' : null,
+        };
+        play(move);
+        return;
+      }
+    }
+
+    const piece = pos.get(index);
+    state.selected = piece !== null && state.selected !== index ? index : null;
     refreshExplorer(pos);
     return;
   }
@@ -255,6 +302,7 @@ function onSquare(index) {
 
 function play(move) {
   state.history.push({ position: state.position, move });
+  state.animatingMove = { from: move.from, to: move.to };
   state.position = makeMove(state.position, move);
   state.selected = null;
   refresh();
@@ -279,6 +327,7 @@ function askPromotion(moves) {
 function undo() {
   const previous = state.history.pop();
   if (!previous) return;
+  state.animatingMove = null;
   state.position = previous.position;
   state.selected = null;
   refresh();
@@ -294,6 +343,7 @@ function loadFromField() {
     state.position = next;
     state.history = [];
     state.selected = null;
+    state.animatingMove = null;
     refresh();
   } catch (error) {
     els.status.textContent = 'Could not load: ' + error.message;

@@ -37,6 +37,49 @@ function hullOf(geometry) {
   return hull;
 }
 
+// Module-level cache for parsed geometries and hulls to avoid asynchronous
+// reloading and flickering fallback glyphs when moving pieces or rebuilding views.
+const geometryCache = new Map();
+const loadingPromises = new Map();
+const loader = new GLTFLoader();
+
+function loadPieceGeometry(type) {
+  if (geometryCache.has(type)) {
+    return Promise.resolve(geometryCache.get(type));
+  }
+  if (loadingPromises.has(type)) {
+    return loadingPromises.get(type);
+  }
+  const file = FILES[type];
+  const promise = (async () => {
+    const gltf = await loader.loadAsync(new URL(`../../assets/chess/${file}.glb`, import.meta.url).href);
+    const meshes = [];
+    gltf.scene.traverse(object => { if (object.isMesh) meshes.push(object); });
+    if (meshes.length !== 1) {
+      meshes.forEach(mesh => {
+        mesh.geometry.dispose();
+        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(m => m.dispose());
+      });
+      throw new Error(`Expected one mesh in ${file}.glb`);
+    }
+    const source = meshes[0];
+    gltf.scene.updateMatrixWorld(true);
+    source.geometry.applyMatrix4(source.matrixWorld);
+    (Array.isArray(source.material) ? source.material : [source.material]).forEach(m => m.dispose());
+    const hull = hullOf(source.geometry);
+    const entry = { geometry: source.geometry, hull };
+    geometryCache.set(type, entry);
+    return entry;
+  })();
+  loadingPromises.set(type, promise);
+  return promise;
+}
+
+// Pre-load all pieces immediately so they are cached as early as possible
+for (const type of Object.keys(FILES)) {
+  loadPieceGeometry(type).catch(() => {});
+}
+
 export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d') {
   const material = new THREE.MeshStandardMaterial({ roughness: .68, metalness: 0 });
   const ghostMaterial = new THREE.MeshStandardMaterial({
@@ -45,7 +88,6 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: outlineColor, side: THREE.BackSide });
   outlineMaterial.onBeforeCompile = outlineShader;
   const groups = new Map();
-  const loader = new GLTFLoader();
   let disposed = false;
   const ambient = new THREE.HemisphereLight('#fff8e9', '#637365', 2);
   const key = new THREE.DirectionalLight('#ffffff', 2.5);
@@ -58,52 +100,56 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   let highlight = null;
   let enabled = false;
 
-  const loads = Object.entries(FILES).map(async ([type, file]) => {
+  const makeMesh = (count, meshMaterial, geometry, renderOrder) => {
+    if (!count) return null;
+    const mesh = new THREE.InstancedMesh(geometry, meshMaterial, count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = renderOrder;
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  };
+  const colour = (mesh, subset) => {
+    subset.forEach((slot, i) => {
+      const char = pieceAt(instances[slot].lattice);
+      mesh?.setColorAt(i, new THREE.Color(char === char.toUpperCase() ? '#fff3d8' : '#34483d'));
+    });
+    return mesh;
+  };
+
+  const initGroup = (type, geometry, hull) => {
     const slots = instances.flatMap((inst, index) =>
       pieceAt(inst.lattice).toLowerCase() === type ? [index] : []);
     if (!slots.length) return;
-    const gltf = await loader.loadAsync(new URL(`../../assets/chess/${file}.glb`, import.meta.url).href);
-    const meshes = [];
-    gltf.scene.traverse(object => { if (object.isMesh) meshes.push(object); });
-    if (disposed || meshes.length !== 1) {
-      meshes.forEach(mesh => {
-        mesh.geometry.dispose();
-        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(m => m.dispose());
-      });
-      if (!disposed) throw new Error(`Expected one mesh in ${file}.glb`);
-      return;
-    }
-    const source = meshes[0];
-    gltf.scene.updateMatrixWorld(true);
-    source.geometry.applyMatrix4(source.matrixWorld);
-    (Array.isArray(source.material) ? source.material : [source.material]).forEach(m => m.dispose());
-    const makeMesh = (count, meshMaterial, geometry, renderOrder) => {
-      if (!count) return null;
-      const mesh = new THREE.InstancedMesh(geometry, meshMaterial, count);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.frustumCulled = false;
-      mesh.renderOrder = renderOrder;
-      mesh.visible = false;
-      scene.add(mesh);
-      return mesh;
-    };
-    const colour = (mesh, subset) => {
-      subset.forEach((slot, i) => {
-        const char = pieceAt(instances[slot].lattice);
-        mesh?.setColorAt(i, new THREE.Color(char === char.toUpperCase() ? '#fff3d8' : '#34483d'));
-      });
-      return mesh;
-    };
     const homes = slots.filter(slot => instances[slot].home);
     const ghosts = slots.filter(slot => !instances[slot].home);
-    const hull = hullOf(source.geometry);
     groups.set(type, {
-      geometry: source.geometry,
+      geometry,
       hull,
-      solid: { mesh: colour(makeMesh(homes.length, material, source.geometry, 2), homes), slots: homes },
-      ghost: { mesh: colour(makeMesh(ghosts.length, ghostMaterial, source.geometry, 1), ghosts), slots: ghosts },
+      solid: { mesh: colour(makeMesh(homes.length, material, geometry, 2), homes), slots: homes },
+      ghost: { mesh: colour(makeMesh(ghosts.length, ghostMaterial, geometry, 1), ghosts), slots: ghosts },
       outline: makeMesh(Math.min(OUTLINE_MAX, slots.length), outlineMaterial, hull, 1),
     });
+  };
+
+  // Synchronously initialize groups for any pieces already in cache
+  for (const type of Object.keys(FILES)) {
+    if (geometryCache.has(type)) {
+      const cached = geometryCache.get(type);
+      initGroup(type, cached.geometry, cached.hull);
+    }
+  }
+
+  const loads = Object.keys(FILES).map(async (type) => {
+    const slots = instances.flatMap((inst, index) =>
+      pieceAt(inst.lattice).toLowerCase() === type ? [index] : []);
+    if (!slots.length) return;
+    const { geometry, hull } = await loadPieceGeometry(type);
+    if (disposed) return;
+    if (!groups.has(type)) {
+      initGroup(type, geometry, hull);
+    }
   });
   Promise.allSettled(loads).then(results => {
     if (disposed) return;
@@ -189,8 +235,6 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
           scene.remove(mesh);
           mesh.dispose();
         }
-        group.geometry.dispose();
-        group.hull.dispose();
       }
       material.dispose();
       ghostMaterial.dispose();

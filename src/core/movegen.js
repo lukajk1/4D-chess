@@ -1,7 +1,7 @@
 import { WHITE, BLACK, colorOf, typeOf, opposite, withColor, toCoord, toIndex, step } from './position.js';
 import { vectorsFor, modeOf } from './pieces.js';
 
-const forwardAxisOf = (pos) => pos.variant?.forwardAxis ?? (pos.dims >= 2 ? 1 : 0);
+export const forwardAxisOf = (pos) => pos.variant?.forwardAxis ?? (pos.dims >= 2 ? 1 : 0);
 const promotionsOf = (pos) => pos.variant?.promotions ?? ['q', 'r', 'b', 'n'];
 
 function slide(pos, from, vectors, out, color) {

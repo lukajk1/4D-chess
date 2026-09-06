@@ -17,9 +17,15 @@ import {
 // Lattice points and wires stay in shared buffers. Pieces can use either the
 // single billboard batch or one instanced model batch per visible piece type.
 
-export function createSpatialView(pos, onSelect, glyphFor) {
+export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const is4D = pos.dims === 4;
   const theme = readTheme();
+  let animatingMove = lastMove && lastMove.from !== undefined && lastMove.to !== undefined ? {
+    from: lastMove.from,
+    to: lastMove.to,
+    startTime: performance.now(),
+    duration: 220,
+  } : null;
   const count = pos.squares.length;
   const coords = pos.squares.map((_, i) => pos.coord(i));
   const center = pos.shape.map((n) => (n - 1) / 2);
@@ -701,6 +707,75 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     cellFrameGeometry.attributes.position.needsUpdate = true;
   }
 
+  function findMatchingSlot(lattice, cell) {
+    if (cell) {
+      for (let s = 0; s < slotCount; s++) {
+        if (slotLattice[s] === lattice && slots[s].cell === cell) return s;
+      }
+    }
+    return homeSlotOf[lattice];
+  }
+
+  function updatePiecePositions(now = performance.now()) {
+    if (!pieceMesh) return;
+
+    let easeT = 1;
+    if (animatingMove) {
+      const elapsed = now - animatingMove.startTime;
+      const progress = Math.min(1, Math.max(0, elapsed / animatingMove.duration));
+      easeT = progress * progress * (3 - 2 * progress);
+      if (progress >= 1) {
+        animatingMove = null;
+      }
+    }
+
+    pieceInstances.forEach((inst, k) => {
+      const s = inst.slot;
+      let tx = is4D ? positions[s * 3] : latticeFolded[inst.lattice * 3];
+      let ty = is4D ? positions[s * 3 + 1] : latticeFolded[inst.lattice * 3 + 1];
+      let tz = is4D ? positions[s * 3 + 2] : latticeFolded[inst.lattice * 3 + 2];
+      let tScale = is4D ? pointSize[s] / basePointSize : 1;
+
+      if (animatingMove && inst.lattice === animatingMove.to) {
+        const fromSlot = is4D ? findMatchingSlot(animatingMove.from, slots[s].cell) : -1;
+        const fx = is4D ? positions[fromSlot * 3] : latticeFolded[animatingMove.from * 3];
+        const fy = is4D ? positions[fromSlot * 3 + 1] : latticeFolded[animatingMove.from * 3 + 1];
+        const fz = is4D ? positions[fromSlot * 3 + 2] : latticeFolded[animatingMove.from * 3 + 2];
+        const fScale = is4D ? pointSize[fromSlot] / basePointSize : 1;
+
+        tx = fx + (tx - fx) * easeT;
+        ty = fy + (ty - fy) * easeT;
+        tz = fz + (tz - fz) * easeT;
+        tScale = fScale + (tScale - fScale) * easeT;
+      }
+
+      pieceCenters[k * 3] = tx;
+      pieceCenters[k * 3 + 1] = ty;
+      pieceCenters[k * 3 + 2] = tz;
+      pieceScale[k] = tScale;
+
+      if (is4D) {
+        if (inst.home) {
+          pieceAlpha[k] = 1;
+        } else {
+          const h = inst.homeSlot * 3;
+          const apart = Math.hypot(
+            positions[s * 3] - positions[h],
+            positions[s * 3 + 1] - positions[h + 1],
+            positions[s * 3 + 2] - positions[h + 2],
+          );
+          pieceAlpha[k] = GHOST_ALPHA * Math.min(1, apart / 0.6);
+        }
+      }
+    });
+
+    pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
+    pieceMesh.geometry.attributes.aScale.needsUpdate = true;
+    if (is4D) pieceMesh.geometry.attributes.aAlpha.needsUpdate = true;
+
+    syncModelPieces();
+  }
+
   function writeSlotPositions() {
     const t = unfoldT;
     const K = cameraK(t);
@@ -729,25 +804,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     pointGeometry.computeBoundingSphere();
     applyColors();
     if (is4D && pieceMesh) {
-      // Every sprite follows its own slot and scales with the lattice spacing
-      // there. A ghost stays invisible while it still coincides with the home
-      // copy and fades in as the unfold carries it away.
-      pieceInstances.forEach((inst, k) => {
-        const s = inst.slot;
-        pieceCenters.set(positions.subarray(s * 3, s * 3 + 3), k * 3);
-        pieceScale[k] = pointSize[s] / basePointSize;
-        if (inst.home) { pieceAlpha[k] = 1; return; }
-        const h = inst.homeSlot * 3;
-        const apart = Math.hypot(
-          positions[s * 3] - positions[h],
-          positions[s * 3 + 1] - positions[h + 1],
-          positions[s * 3 + 2] - positions[h + 2],
-        );
-        pieceAlpha[k] = GHOST_ALPHA * Math.min(1, apart / 0.6);
-      });
-      pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
-      pieceMesh.geometry.attributes.aScale.needsUpdate = true;
-      pieceMesh.geometry.attributes.aAlpha.needsUpdate = true;
+      updatePiecePositions();
     }
     if (is4D) writeCellFrame(K, g, shift);
     writeHighlights();
@@ -826,12 +883,10 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     // In 4D the pieces are placed per slot in writeSlotPositions, which has
     // already run; this folded-lattice path is for the 3D board only.
     if (pieceMesh && !is4D) {
-      pieceInstances.forEach((inst, k) => {
-        pieceCenters.set(latticeFolded.subarray(inst.lattice * 3, inst.lattice * 3 + 3), k * 3);
-      });
-      pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
+      updatePiecePositions();
+    } else {
+      syncModelPieces();
     }
-    syncModelPieces();
     needsRender = true;
   }
 
@@ -1129,6 +1184,9 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     if (positionsChanged) {
       writeSlotPositions();
       applyFilters();
+    } else if (animatingMove) {
+      updatePiecePositions(now);
+      needsRender = true;
     }
     if (controls.update() || needsRender) {
       renderer.render(scene, camera);
@@ -1146,6 +1204,113 @@ export function createSpatialView(pos, onSelect, glyphFor) {
 
   return {
     element: root,
+    getCameraState() {
+      return {
+        cameraKind: camera === perspective ? 'perspective' : 'orthographic',
+        position: camera.position.clone(),
+        target: controls.target.clone(),
+        zoom: camera.zoom,
+        pieceMode,
+        showPieces,
+        reachMode,
+        colourMode,
+        wMode,
+        wSpread,
+        unfoldT,
+        unfoldTarget,
+        rotationRunning,
+        rotationAngles: Array.from(rotationAngles),
+        layer,
+        background,
+      };
+    },
+    setCameraState(state) {
+      if (!state) return;
+      if (state.cameraKind) setCamera(state.cameraKind);
+      if (state.position) camera.position.copy(state.position);
+      if (state.target) controls.target.copy(state.target);
+      if (state.zoom !== undefined) {
+        camera.zoom = state.zoom;
+        camera.updateProjectionMatrix();
+      }
+      controls.update();
+      reportZoom();
+
+      let needsRebuild = false;
+      if (state.pieceMode !== undefined && state.pieceMode !== pieceMode) {
+        pieceMode = state.pieceMode;
+        root.querySelectorAll('[aria-label="Piece rendering"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === pieceMode));
+        });
+      }
+      if (state.showPieces !== undefined && state.showPieces !== showPieces) {
+        showPieces = state.showPieces;
+        const cb = root.querySelector('.piece-toggle input');
+        if (cb) cb.checked = showPieces;
+      }
+      if (state.reachMode !== undefined && state.reachMode !== reachMode) {
+        reachMode = state.reachMode;
+        root.querySelectorAll('[aria-label="Move highlight"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === reachMode));
+        });
+      }
+      if (state.colourMode !== undefined && state.colourMode !== colourMode) {
+        colourMode = state.colourMode;
+        root.querySelectorAll('[aria-label="Point colouring"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === colourMode));
+        });
+        applyColors();
+      }
+      if (state.wMode !== undefined && state.wMode !== wMode) {
+        wMode = state.wMode;
+        root.querySelectorAll('[aria-label="Hyperprojection"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === wMode));
+        });
+        needsRebuild = true;
+      }
+      if (state.wSpread !== undefined && state.wSpread !== wSpread) {
+        wSpread = state.wSpread;
+        const wInput = root.querySelector('[aria-label="W spacing"]');
+        if (wInput) wInput.value = String(wSpread);
+        measureNet();
+        needsRebuild = true;
+      }
+      if (state.unfoldT !== undefined) {
+        unfoldT = state.unfoldT;
+        unfoldTarget = state.unfoldTarget ?? state.unfoldT;
+        syncFoldUI();
+      }
+      if (state.rotationRunning !== undefined && state.rotationRunning !== rotationRunning) {
+        rotationRunning = state.rotationRunning;
+        const rotBtn = root.querySelector('.rotation-toggle');
+        if (rotBtn) {
+          rotBtn.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
+          rotBtn.setAttribute('aria-pressed', String(rotationRunning));
+        }
+      }
+      if (state.rotationAngles && rotationAngles) {
+        for (let i = 0; i < rotationAngles.length; i++) rotationAngles[i] = state.rotationAngles[i];
+      }
+      if (state.layer !== undefined && state.layer !== layer) {
+        layer = state.layer;
+        const layerSelect = root.querySelector('[aria-label="Visible layer"]');
+        if (layerSelect) layerSelect.value = layer === null ? 'all' : String(layer);
+      }
+      if (state.background !== undefined && state.background !== background) {
+        background = state.background;
+        const bgSelect = root.querySelector('[aria-label="Background"]');
+        if (bgSelect) bgSelect.value = background;
+        applyBackground();
+      }
+
+      if (needsRebuild) {
+        rebuildPositions();
+      } else {
+        writeSlotPositions();
+      }
+      applyFilters();
+      needsRender = true;
+    },
     update(index) {
       selected = index;
       if (selected !== null) {
