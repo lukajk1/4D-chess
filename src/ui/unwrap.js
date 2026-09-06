@@ -13,15 +13,18 @@ import { CELL_COLORS, readTheme } from './gl-shared.js';
 // Cells are drawn as translucent solids rather than point clouds: at this scale
 // the shape of each cell and how it joins its neighbours is the whole point.
 
-export function createUnwrapView(pos, onSelect) {
+export function createUnwrapView(pos, onSelect, options = {}) {
+  // Compact is the always-on minimap: coloured wireframes, no chrome, no
+  // picking. The docked panel keeps its filled faces and its controls.
+  const compact = Boolean(options.compact);
   const theme = readTheme();
   const cells = tesseractCells(pos.shape);
   const extent = pos.shape[0] - 1;          // world units across one cell
   const step = extent * 1.04;               // a hair of daylight between cells
 
   const root = document.createElement('section');
-  root.className = 'unwrap-panel';
-  root.innerHTML = `
+  root.className = compact ? 'unwrap-panel unwrap-mini' : 'unwrap-panel';
+  root.innerHTML = compact ? '' : `
     <div class="cube-heading">
       <div>
         <span class="eyebrow">Unfolded</span>
@@ -64,12 +67,15 @@ export function createUnwrapView(pos, onSelect) {
     const mesh = new THREE.Mesh(box, material);
     mesh.position.copy(origin);
     mesh.userData.cell = cell;
+    // Wireframe only in compact mode. Hiding the mesh also disables picking,
+    // since the raycaster skips invisible objects -- a minimap needs neither.
+    mesh.visible = !compact;
     scene.add(mesh);
 
     const edgeMaterial = new THREE.LineBasicMaterial({
       color: new THREE.Color(CELL_COLORS[cell.id]),
       transparent: true,
-      opacity: 0.75,
+      opacity: compact ? 0.6 : 0.75,
     });
     const edges = new THREE.LineSegments(outline, edgeMaterial);
     edges.position.copy(origin);
@@ -172,7 +178,7 @@ export function createUnwrapView(pos, onSelect) {
     needsRender = true;
   });
 
-  root.querySelector('.reset-unwrap').addEventListener('click', () => {
+  root.querySelector('.reset-unwrap')?.addEventListener('click', () => {
     camera.position.copy(home);
     camera.zoom = 1;
     camera.updateProjectionMatrix();
@@ -202,7 +208,8 @@ export function createUnwrapView(pos, onSelect) {
       const owns = selected !== null && localIndexIn(solid.cell, pos.shape, selected) >= 0;
       const lit = owns || solid.cell.id === focused;
       solid.material.opacity = owns ? 0.4 : lit ? 0.3 : 0.16;
-      solid.edgeMaterial.opacity = lit ? 1 : 0.75;
+      // With no fill to carry it, the wireframe shows the highlight instead.
+      solid.edgeMaterial.opacity = compact ? (owns ? 1 : 0.5) : lit ? 1 : 0.75;
       solid.marker.visible = owns;
       if (owns) solid.marker.position.copy(solid.origin).add(offsetWithin(solid.cell, selected));
     }

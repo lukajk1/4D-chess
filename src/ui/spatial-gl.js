@@ -28,14 +28,24 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const pieceCount = pieceIndices.length;
 
   // ---- DOM shell (markup mirrors the previous viewer so styling carries over)
+  // A two-way choice reads better as a segmented control than as a dropdown:
+  // both options stay visible and switching is one click, not two.
+  const segmented = (label, name, options, current) => `
+    <div class="control">
+      <span class="control-label">${label}</span>
+      <div class="segmented" role="group" aria-label="${name}">
+        ${options.map(([value, text]) => `<button type="button" data-value="${value}" aria-pressed="${value === current}">${text}</button>`).join('')}
+      </div>
+    </div>`;
+
   const root = document.createElement('section');
   root.className = 'cube-view';
   root.innerHTML = `
     <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
-      <label>${is4D ? '3D camera' : 'Projection'} <select aria-label="Projection"><option value="orthographic">Orthographic</option><option value="perspective">Perspective</option></select></label>
+      ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['orthographic', 'Ortho'], ['perspective', 'Perspective']], 'orthographic')}
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
-      ${is4D ? '<label>Colour <select aria-label="Point colouring"><option value="cell">By cell</option><option value="board">Chessboard</option></select></label>' : ''}
+      ${is4D ? segmented('Colour', 'Point colouring', [['cell', 'By cell'], ['board', 'Chessboard']], 'cell') : ''}
       <label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
@@ -674,7 +684,20 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     controls.update();
     reportZoom();
   });
-  root.querySelector('[aria-label="Projection"]').addEventListener('change', (e) => setCamera(e.target.value));
+  // Clicking a segment presses it and releases its sibling.
+  function onSegment(name, handler) {
+    const group = root.querySelector(`.segmented[aria-label="${name}"]`);
+    group?.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-value]');
+      if (!button || button.getAttribute('aria-pressed') === 'true') return;
+      for (const other of group.querySelectorAll('button')) {
+        other.setAttribute('aria-pressed', String(other === button));
+      }
+      handler(button.dataset.value);
+    });
+  }
+
+  onSegment('Projection', setCamera);
   const layerSelect = root.querySelector('[aria-label="Visible layer"]');
   const cellSelect = root.querySelector('[aria-label="Visible cell"]');
   layerSelect.addEventListener('change', () => {
@@ -685,8 +708,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     cellFilter = cellSelect.value === 'all' ? null : cells[Number(cellSelect.value)];
     applyFilters();
   });
-  root.querySelector('[aria-label="Point colouring"]')?.addEventListener('change', (e) => {
-    colourMode = e.target.value;
+  onSegment('Point colouring', (value) => {
+    colourMode = value;
     applyColors();
     // The legend names cells, so it only applies to the cell colouring.
     const legend = root.querySelector('.w-legend');

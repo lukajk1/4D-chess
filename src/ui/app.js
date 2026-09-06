@@ -68,14 +68,25 @@ function refreshExplorer(pos) {
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
-    shell.append(main, side);
+    // Controls dock on the left, optional views on the right, canvas between.
+    const controlsPanel = document.createElement('aside');
+    controlsPanel.className = 'explorer-controls';
+    shell.append(controlsPanel, main, side);
 
+    // Which auxiliary views this position offers. Views that only make sense
+    // in one dimension live in their own modules and are simply absent from
+    // the list for the others, so this table is the only place the shell has
+    // to know about dimension at all.
     const defs = [];
-    if (pos.dims === 4) {
-      defs.push({ id: 'cells', label: 'Cells', make: () => createCubeGrid(pos, onSquare, glyphFor) });
-      defs.push({ id: 'net', label: 'Net', make: () => createUnwrapView(pos, onSquare) });
-    }
+    if (pos.dims === 4) defs.push({ id: 'cells', label: 'Cells', make: () => createCubeGrid(pos, onSquare, glyphFor) });
     defs.push({ id: 'slices', label: 'Slices', make: () => buildSlices(pos) });
+
+    // Always-on overlays, pinned inside the main view rather than toggled.
+    const overlays = pos.dims === 4 ? [createUnwrapView(pos, onSquare, { compact: true })] : [];
+    for (const overlay of overlays) {
+      overlay.element.classList.add('explorer-overlay');
+      main.append(overlay.element);
+    }
 
     const toolbar = document.createElement('div');
     toolbar.className = 'explorer-toolbar';
@@ -132,7 +143,12 @@ function refreshExplorer(pos) {
     heading?.remove();
     if (resetView) toolbar.append(resetView);
     toolbar.append(expand);
-    (controls ?? main).append(toolbar);
+    if (controls) {
+      controls.append(toolbar);
+      controlsPanel.append(controls);
+    } else {
+      controlsPanel.append(toolbar);
+    }
 
     sync();
     els.boardArea.replaceChildren(shell);
@@ -140,10 +156,12 @@ function refreshExplorer(pos) {
       position: pos,
       update(selected) {
         viewer.update(selected);
+        for (const overlay of overlays) overlay.update?.(selected);
         for (const { view } of built.values()) view.update?.(selected);
       },
       destroy() {
         viewer.destroy();
+        for (const overlay of overlays) overlay.destroy?.();
         for (const { view } of built.values()) view.destroy?.();
       },
     };

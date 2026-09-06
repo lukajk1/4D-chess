@@ -415,3 +415,52 @@ dialog::backdrop { background: #0007; }
 .explorer-side .cube-heading h2 { font-size: 15px; }
 
 .explorer-shell { height: calc(100vh - 140px); }
+
+/* Controls dock as a left column, stacked rather than strung across the top,
+   which gives the canvas the full width and height between the two asides. */
+.explorer-controls { flex: 0 0 210px; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--line); padding-right: 16px; }
+.explorer-controls .cube-controls { display: flex; flex-direction: column; align-items: stretch; gap: 13px; border-bottom: 0; padding: 0; }
+.explorer-controls .cube-controls > label { flex-direction: column; align-items: stretch; gap: 5px; }
+.explorer-controls .cube-controls select,
+.explorer-controls .cube-controls input[type=range] { width: 100%; }
+/* A checkbox and its text still belong on one line. */
+.explorer-controls .piece-toggle { flex-direction: row; align-items: center; }
+.explorer-controls .unfold { width: 100%; }
+.explorer-controls .zoom-level { text-align: left; }
+.explorer-controls .explorer-toolbar { margin: 2px 0 0; flex-direction: column; align-items: stretch; gap: 6px; }
+
+@media (max-width: 900px) {
+  .explorer-controls { flex: none; width: 100%; border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 14px; }
+  .explorer-controls .cube-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+  .explorer-controls .cube-controls > label { flex-direction: row; align-items: center; gap: 7px; }
+  .explorer-controls .cube-controls select,
+  .explorer-controls .cube-controls input[type=range] { width: auto; }
+  .explorer-controls .unfold { width: auto; }
+  .explorer-controls .explorer-toolbar { flex-direction: row; margin-left: auto; }
+}
+
+/* The net as an always-on minimap, pinned inside the main view. Wireframe
+   only, and click-through so it never steals a drag from the canvas. */
+.explorer-main { position: relative; }
+.explorer-overlay { position: absolute; top: 10px; right: 10px; z-index: 2; width: 168px; pointer-events: none; }
+.unwrap-mini { background: none; border: 0; border-radius: 0; padding: 0; }
+.unwrap-mini .unwrap-canvas { height: 168px; min-height: 0; margin: 0; cursor: default; }
+@media (max-width: 900px) { .explorer-overlay { width: 116px; } .unwrap-mini .unwrap-canvas { height: 116px; } }
+
+/* Segmented controls: both options visible, one click to switch. */
+.control { display: flex; flex-direction: column; gap: 5px; }
+.control-label { color: var(--muted); font-size: 12px; }
+.segmented { display: flex; }
+.segmented button { flex: 1; min-height: 30px; padding: 5px 8px; font-size: 12px; border-radius: 0; margin-left: -1px; white-space: nowrap; }
+.segmented button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.segmented button:last-child { border-radius: 0 6px 6px 0; }
+.segmented button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  z-index: 1;
+}
+@media (max-width: 900px) {
+  .explorer-controls .control { flex-direction: row; align-items: center; gap: 8px; }
+  .segmented button { flex: none; }
+}
