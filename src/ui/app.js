@@ -2,7 +2,7 @@ import { legalMoves, makeMove, status, inCheck } from '../core/movegen.js';
 import { toFen, moveToText, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
-import { createSpatialView } from './spatial.js';
+import { createSpatialView } from './spatial-gl.js';
 
 const els = {
   variant: document.querySelector('#variant'),
@@ -33,13 +33,36 @@ let explorer = null;
 function refreshExplorer(pos) {
   if (explorer?.position !== pos) {
     explorer?.viewer.destroy();
-    const slices = renderBoard(pos, { selected: null, targets: new Map(), checkIndex: null, lastMove: null, onSquare });
-    const viewer = createSpatialView(pos, onSquare);
+    const slices = document.createElement('div');
+    slices.className = 'explorer-slices';
+    let cubeSelect = null;
+    if (pos.dims === 4) {
+      const label = document.createElement('label');
+      label.className = 'slice-cube-picker';
+      label.textContent = '2D slices of cube ';
+      cubeSelect = document.createElement('select');
+      cubeSelect.setAttribute('aria-label', 'Slice cube');
+      for (let w = 0; w < pos.shape[3]; w++) cubeSelect.add(new Option(`w = ${w + 1}`, String(w)));
+      label.append(cubeSelect); slices.append(label);
+    }
+    const sliceBoards = document.createElement('div');
+    slices.append(sliceBoards);
+    const showCube = w => {
+      sliceBoards.replaceChildren(renderBoard(pos, { selected: state.selected, targets: new Map(), checkIndex: null, lastMove: null, onSquare, ...(pos.dims === 4 ? { wLayer: w } : {}) }));
+      if (cubeSelect) cubeSelect.value = String(w);
+    };
+    showCube(0);
+    cubeSelect?.addEventListener('change', () => { showCube(Number(cubeSelect.value)); });
+    const viewer = createSpatialView(pos, onSquare, glyphFor);
     const layout = document.createElement('div');
     layout.className = 'cube-explorer';
     layout.append(slices, viewer.element);
     els.boardArea.replaceChildren(layout);
-    explorer = { position: pos, viewer, slices };
+    explorer = { position: pos, viewer, slices, cubeSelect, showCube };
+  }
+  if (state.selected !== null && explorer.cubeSelect) {
+    const w = pos.coord(state.selected)[3];
+    if (Number(explorer.cubeSelect.value) !== w) explorer.showCube(w);
   }
   for (const cell of explorer.slices.querySelectorAll('.cell')) {
     const selected = Number(cell.dataset.index) === state.selected;
@@ -47,7 +70,7 @@ function refreshExplorer(pos) {
     cell.setAttribute('aria-pressed', String(selected));
   }
   explorer.viewer.update(state.selected);
-  els.status.textContent = '3D position explorer';
+  els.status.textContent = `${pos.dims}D position explorer`;
   els.blurb.textContent = VARIANTS[state.variantId].blurb;
   els.reset.textContent = 'Reset position';
   els.fen.value = toFen(pos);

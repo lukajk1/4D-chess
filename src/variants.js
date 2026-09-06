@@ -21,30 +21,12 @@ function cubeVariant() {
   };
 }
 
-function spatialVariant(dims) {
-  const shape = dims === 3 ? [4, 6, 4] : [4, 6, 4, 4];
-  const pos = new Position({ shape });
-  const army = [
-    ['r', 0, 0, 0], ['n', 1, 0, 0], ['b', 2, 0, 0], ['u', 3, 0, 0],
-    ['r', 0, 1, 0], ['q', 1, 1, 0], ['k', 2, 1, 0], ['b', 3, 1, 0],
-    ...(dims === 4 ? [['a', 1, 0, 1], ['u', 2, 0, 1]] : []),
-  ];
-  for (const [type, x, z, w] of army) {
-    for (const color of ['w', 'b']) {
-      const white = color === 'w';
-      const coord = [x, white ? 0 : 5, white ? z : 3 - z];
-      if (dims === 4) coord.push(white ? w : 3 - w);
-      pos.set(pos.index(coord), white ? type.toUpperCase() : type);
-      coord[1] = white ? 1 : 4;
-      pos.set(pos.index(coord), white ? 'P' : 'p');
-    }
-  }
+function hypercubeVariant() {
+  const pos = new Position({ shape: [8, 8, 8, 8] });
   return {
-    id: `${dims}d`, name: `${dims}D chess`, shape,
-    blurb: `${shape.join(' × ')} · Experimental setup. Select a piece to see moves across slices.`,
-    forwardAxis: 1, pawnRank: { w: 1, b: 4 }, castling: [],
-    promotions: ['q', 'r', 'b', 'n', 'u', ...(dims === 4 ? ['a'] : [])],
-    start: toFen(pos),
+    id: '4d', name: '4D chess', shape: pos.shape, inspectionOnly: true,
+    blurb: '8 × 8 × 8 × 8 · 4,096 positions · Eight cubes, one lattice',
+    castling: [], start: toFen(pos),
   };
 }
 
@@ -96,7 +78,7 @@ export const VARIANTS = {
     start: '8x8 rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
   },
   '3d': cubeVariant(),
-  '4d': spatialVariant(4),
+  '4d': hypercubeVariant(),
 };
 
 export function startPosition(id) {

@@ -59,6 +59,12 @@
 .cube-piece.white { fill: #fffdf6; stroke: #354537; }
 .cube-piece.black { fill: #26362c; stroke: #e0e5d4; }
 .cube-node:hover .cube-dot { stroke: var(--selected); stroke-width: 3; }
+.hyper-point:hover { stroke: var(--selected); stroke-width: 2; }
+.w-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font: 11px ui-monospace, monospace; }
+.w-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.w-legend i { width: 7px; height: 7px; border-radius: 50%; }
+.slice-cube-picker { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+.explorer-slices { min-width: 0; width: 100%; }
 .cube-axes line { stroke: var(--muted); stroke-width: 1.5; }
 .cube-axes text { fill: var(--muted); font-size: 13px; }
 .cube-caption { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font: 12px/1.6 ui-monospace, monospace; min-height: 46px; }
@@ -310,3 +316,10 @@ dialog::backdrop { background: #0007; }
   .layout { grid-template-columns: minmax(0, 1fr); }
   main { padding: 18px 14px 40px; }
 }
+
+/* WebGL viewport. It needs an explicit height: a canvas defaults to 150px
+   intrinsic size, and the ResizeObserver reads clientHeight. */
+.cube-canvas { display: block; width: 100%; height: min(62vh, 620px); min-height: 300px; touch-action: none; cursor: grab; user-select: none; }
+.cube-canvas:active { cursor: grabbing; }
+.cube-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 850px) { .cube-canvas { height: auto; aspect-ratio: 1; } }

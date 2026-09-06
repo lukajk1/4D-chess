@@ -4,9 +4,12 @@ Chess generalised over any number of dimensions. A 1×8 strip, an ordinary 8×8
 board, and a 4×4×4×4 hypercube are the *same engine* with a different shape —
 no per-variant move code.
 
-Vanilla JavaScript, ES modules, no dependencies and no build step.
+Vanilla JavaScript and ES modules, with no build step. The engine has no
+dependencies at all; the spatial viewer uses three.js, loaded through an import
+map rather than a bundler.
 
 ```bash
+npm install # three.js, for the 3D/4D viewer only
 npm start   # serves http://localhost:5173
 npm test    # move generator test suite
 ```
@@ -82,10 +85,13 @@ src/core/pieces.js     piece definitions as vector rules
 src/core/movegen.js    legal moves, check, castling, en passant, perft
 src/core/notation.js   n-dimensional FEN, square names
 src/variants.js        board shapes and starting positions
-src/ui/                rendering and interaction
+src/ui/board.js        1D/2D boards and n-D slice grids
+src/ui/spatial-gl.js   WebGL lattice viewer (three.js)
 ```
 
-`src/core` has no DOM dependency and runs under plain Node.
+`src/core` has no DOM dependency, no three.js dependency, and runs under plain
+Node. The 4D -> 3D projection lives in the viewer, not the engine: three.js is
+only ever handed 3D coordinates.
 
 ## Adding a dimension
 
@@ -96,5 +102,25 @@ slices or a projection, which is a UI problem, not an engine one.
 
 ## Status
 
-1D and 2D are complete and playable. 3D and 4D are unimplemented at the
-variant/UI layer.
+1D and 2D are complete and playable, with legal move generation.
+
+3D (8x8x8, 512 positions) and 4D (8x8x8x8, 4,096 positions) exist as position
+explorers only: the lattice renders and every square is inspectable, but pieces
+do not move there yet.
+
+### Why the viewer is WebGL
+
+The first spatial viewer built one SVG element per position. Measured on an
+8x8x8x8 lattice it reached 8,355 SVG nodes and ~26 ms per frame (~38 fps) while
+orbiting -- and that was with an *empty* board, before pieces were added.
+
+The WebGL viewer draws the same scene in 2-3 draw calls:
+
+| | SVG | WebGL |
+|---|---|---|
+| DOM nodes (4D) | 8,355 | 56 |
+| Frame time (4D) | 26.4 ms | 0.1 ms |
+| Orbit (4D) | ~38 fps | 60 fps (vsync) |
+
+Pieces are drawn as billboarded quads sampling a glyph atlas built on a canvas,
+so all 232 of them cost one draw call.
