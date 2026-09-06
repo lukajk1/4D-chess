@@ -26,6 +26,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     startTime: performance.now(),
     duration: 220,
   } : null;
+  let capturedToSpawn = lastMove?.captured && lastMove.to !== undefined ? {
+    char: lastMove.captured,
+    square: lastMove.to,
+  } : null;
   const count = pos.squares.length;
   const coords = pos.squares.map((_, i) => pos.coord(i));
   const center = pos.shape.map((n) => (n - 1) / 2);
@@ -1189,6 +1193,19 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     frame = requestAnimationFrame(tick);
     const elapsed = Math.min(.05, Math.max(0, (now - lastTick) / 1000));
     lastTick = now;
+    if (capturedToSpawn) {
+      const sq = capturedToSpawn.square;
+      const s = homeSlotOf[sq];
+      if (s >= 0) {
+        const capX = is4D ? positions[s * 3] : latticeFolded[sq * 3];
+        const capY = is4D ? positions[s * 3 + 1] : latticeFolded[sq * 3 + 1];
+        const capZ = is4D ? positions[s * 3 + 2] : latticeFolded[sq * 3 + 2];
+        const capScale = is4D ? (pointSize[s] / basePointSize) : 1;
+        modelPieces.spawnTossed(capturedToSpawn.char, [capX, capY, capZ], capScale);
+      }
+      capturedToSpawn = null;
+    }
+
     let positionsChanged = false;
     if (unfoldT !== unfoldTarget) {
       // Around 3.3s end to end, long enough to read each stage.
@@ -1212,6 +1229,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       updatePiecePositions(now);
       needsRender = true;
     }
+
+    const hasTossed = modelPieces.updateTossed?.(elapsed);
+    if (hasTossed) needsRender = true;
+
     if (controls.update() || needsRender) {
       renderer.render(scene, camera);
       needsRender = false;

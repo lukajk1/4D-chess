@@ -302,7 +302,7 @@ function onSquare(index) {
 
 function play(move) {
   state.history.push({ position: state.position, move });
-  state.animatingMove = { from: move.from, to: move.to };
+  state.animatingMove = { from: move.from, to: move.to, piece: move.piece, captured: move.captured };
   state.position = makeMove(state.position, move);
   state.selected = null;
   refresh();
@@ -350,7 +350,9 @@ function loadFromField() {
   }
 }
 
+const ALLOWED_VARIANTS = new Set(['4d-4', '4d']);
 for (const [id, variant] of Object.entries(VARIANTS)) {
+  if (!ALLOWED_VARIANTS.has(id)) continue;
   const option = document.createElement('option');
   option.value = id;
   option.textContent = variant.name;

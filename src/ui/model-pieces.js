@@ -121,6 +121,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   let enabled = false;
   let capturable = new Set();
   let lastUpdateArgs = null;
+  const tossed = [];
 
   const makeMesh = (count, meshMaterial, geometry, renderOrder) => {
     if (!count) return null;
@@ -268,8 +269,69 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       }
       writeOutlines();
     },
+    spawnTossed(char, [x, y, z], scale = 1) {
+      if (!char) return;
+      const type = char.toLowerCase();
+      const cached = geometryCache.get(type);
+      if (!cached) return;
+
+      const mat = captureMaterial.clone();
+      const mesh = new THREE.Mesh(cached.geometry, mat);
+      mesh.renderOrder = 4;
+      mesh.scale.setScalar(scale * MODEL_SCALE);
+      mesh.position.set(x, y, z);
+      const isWhite = char === char.toUpperCase();
+      mesh.rotation.y = isWhite ? 0 : Math.PI;
+      scene.add(mesh);
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 0.6 + Math.random() * 0.8;
+      tossed.push({
+        mesh,
+        mat,
+        x, y, z,
+        vx: Math.cos(angle) * speed,
+        vy: 4.8 + Math.random() * 1.0,
+        vz: Math.sin(angle) * speed,
+        rx: (Math.random() - 0.5) * 10,
+        ry: (Math.random() - 0.5) * 8,
+        rz: (Math.random() - 0.5) * 10,
+        startY: y,
+      });
+    },
+    updateTossed(elapsed) {
+      for (let i = tossed.length - 1; i >= 0; i--) {
+        const p = tossed[i];
+        p.vy -= 14 * elapsed;
+        p.x += p.vx * elapsed;
+        p.y += p.vy * elapsed;
+        p.z += p.vz * elapsed;
+
+        p.mesh.position.set(p.x, p.y, p.z);
+        p.mesh.rotation.x += p.rx * elapsed;
+        p.mesh.rotation.y += p.ry * elapsed;
+        p.mesh.rotation.z += p.rz * elapsed;
+
+        const drop = p.startY - p.y;
+        if (drop > 1.2) {
+          p.mat.opacity = Math.max(0, 0.62 * (1 - (drop - 1.2) / 3.5));
+        }
+
+        if (drop > 4.5 || p.mat.opacity <= 0.01) {
+          scene.remove(p.mesh);
+          p.mat.dispose();
+          tossed.splice(i, 1);
+        }
+      }
+      return tossed.length > 0;
+    },
     dispose() {
       disposed = true;
+      for (const p of tossed) {
+        scene.remove(p.mesh);
+        p.mat.dispose();
+      }
+      tossed.length = 0;
       for (const group of groups.values()) {
         for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }]) {
           if (!part?.mesh) continue;
