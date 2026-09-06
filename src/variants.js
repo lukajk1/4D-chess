@@ -51,6 +51,9 @@ function cubeVariant(n) {
 
 function hypercubeVariant(n) {
   const pos = new Position({ shape: [n, n, n, n] });
+  // A 4-wide cube has no room for pawns along y, so layoutArmies leaves them
+  // off and they go in along w instead, where there is room.
+  const pawnsAlongW = n < 6;
   // The 3D game pulled apart along w: white's half lives in the interior cube
   // (w = 1) and black's in the outer cube (w = n), facing each other across the
   // fourth axis with open board between.
@@ -62,12 +65,32 @@ function hypercubeVariant(n) {
     // on the single axis being pulled apart -- as e1 and e8 share a file.
     pos.set(pos.index([x, white ? y : n - 1 - y, z, white ? 0 : n - 1]), piece);
   });
+
+  // Both back ranks sit in the y = 0 plane, so the pawns are a plane too: the
+  // full (x, z) square, one step along w in front of the rank it screens. That
+  // fills the w axis of that plane -- back, pawns, pawns, back -- which is the
+  // only arrangement four cells allow, and leaves y and the six face cells
+  // open. The two pawn planes touch, so nothing can advance, but every pawn
+  // starts able to capture: a capture steps forward in w and one square in
+  // exactly one other axis, which reaches the enemy plane diagonally.
+  if (pawnsAlongW) {
+    for (let x = 0; x < n; x++) {
+      for (let z = 0; z < n; z++) {
+        pos.set(pos.index([x, 0, z, 1]), 'P');
+        pos.set(pos.index([x, 0, z, n - 2]), 'p');
+      }
+    }
+  }
+
   return {
     id: n === 8 ? '4d' : `4d-${n}`,
     royalLayers,
     name: `4D chess (${n}⁴)`,
     shape: pos.shape,
     inspectionOnly: true,
+    // Those pawns advance along w, so w is the forward axis. The 8-wide board
+    // keeps the y-facing pawns layoutArmies gives it, and the axis-1 default.
+    ...(pawnsAlongW && { forwardAxis: 3 }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
     start: toFen(pos),
