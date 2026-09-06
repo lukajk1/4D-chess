@@ -390,3 +390,28 @@ dialog::backdrop { background: #0007; }
   .explorer-side { flex: none; width: 100%; }
   .explorer-main .cube-canvas { flex: none; aspect-ratio: 1; }
 }
+
+/* One surface. The explorer is the panel, so nothing inside it draws its own
+   card, and the redundant status row above it goes away. */
+.inspection .game-state { display: none; }
+.inspection main { padding-top: 12px; }
+
+.explorer-main > .cube-view,
+.explorer-side .cube-grid-panel,
+.explorer-side .unwrap-panel {
+  border: 0;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The control strip is the only divider the main view needs. */
+.explorer-main .cube-controls { padding-top: 0; }
+.explorer-toolbar { margin: 0 0 0 auto; gap: 6px; }
+.explorer-toolbar button { min-height: 30px; padding: 5px 11px; font-size: 12px; }
+
+/* Docked panels separate with a rule rather than a border box. */
+.side-panel + .side-panel { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 20px; }
+.explorer-side .cube-heading h2 { font-size: 15px; }
+
+.explorer-shell { height: calc(100vh - 140px); }
