@@ -59,8 +59,28 @@ That ordering is chosen so **the 2D case is byte-for-byte ordinary FEN**:
 2D chess    8x8 rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
 ```
 
-Any standard FEN string works by prefixing `8x8 `. Square names follow the same
-principle: `a` in 1D, `e4` in 2D, `e4:2:3` once there are more axes.
+Any standard FEN string works by prefixing `8x8 `.
+
+Square names gain one prefix per extra axis, each from a different alphabet so
+they never need separators:
+
+| dims | example | reads as |
+|---|---|---|
+| 1D | `e` | file |
+| 2D | `e4` | file, rank |
+| 3D | `γe4` | layer γ (the third board), e4 |
+| 4D | `ivγe4` | cell iv, layer γ, e4 |
+
+Roman numerals count w, so `i` is the interior cube and the highest numeral the
+outer one — the first and last cells of the tesseract. Greek letters count z,
+so `α` is the first board in the stack. Each level of the hierarchy uses a
+distinct character class (Roman, Greek, Latin, digits), which is what lets
+`ivγe4` parse without any punctuation. Lowercase Roman is safe because files
+only ever run a–h, so `i`, `v` and `x` can't be mistaken for a file.
+
+In 4D the armies sit in the two w-extreme cells: white's half of the 3D setup in
+the interior cube (w = 1), black's in the outer cube (w = n), facing each other
+across the fourth axis with open board between.
 
 ## Correctness
 

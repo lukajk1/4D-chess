@@ -29,7 +29,12 @@ test('square names round-trip in every dimension', () => {
   }
   assert.equal(squareName([8], 0), 'a');
   assert.equal(squareName([8, 8], 4), 'e1');
-  assert.equal(squareName([4, 4, 4, 4], 0), 'a1:1:1');
+  // 3D: Greek layer prefix. 4D: Roman cell prefix, I interior through the
+  // highest numeral for the outer cube.
+  assert.equal(squareName([8, 8, 8], 4 + 2 * 64), 'γe1');
+  assert.equal(squareName([4, 4, 4, 4], 0), 'iαa1');
+  assert.equal(squareName([4, 4, 4, 4], 255), 'ivδd4');
+  assert.equal(squareName([8, 8, 8, 8], 4095), 'viiiθh8');
 });
 
 test('2D placement field is byte-identical to standard FEN', () => {

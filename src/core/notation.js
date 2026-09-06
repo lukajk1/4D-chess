@@ -17,21 +17,66 @@ import { Position, toCoord, toIndex, sizeOf } from './position.js';
 
 const FILES = 'abcdefghijklmnopqrstuvwxyz';
 
+// Square names gain one prefix per extra axis, each from a different alphabet
+// so they never need separators and parse unambiguously:
+//
+//   1D  e          file
+//   2D  e4         file, rank
+//   3D  γe4        layer (Greek), file, rank
+//   4D  ivγe4      cell (Roman), layer, file, rank
+//
+// Roman numerals count w, so i is the interior cube and the highest numeral
+// the outer one -- the first and last cells of the tesseract. Layers are the
+// z slices, so α is the first board in the stack.
+export const GREEK = 'αβγδεζηθικλμνξοπρστυφχψω';
+// Lowercase, to sit beside the lowercase Greek. Files only ever run a-h, so
+// i, v and x can never be mistaken for a file letter.
+const ROMAN = [[10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+const ROMAN_VALUE = { i: 1, v: 5, x: 10 };
+
+export function toRoman(n) {
+  let out = '';
+  for (const [value, glyph] of ROMAN) while (n >= value) { out += glyph; n -= value; }
+  return out;
+}
+
+export function fromRoman(text) {
+  let total = 0;
+  for (let i = 0; i < text.length; i++) {
+    const v = ROMAN_VALUE[text[i]];
+    const next = ROMAN_VALUE[text[i + 1]] ?? 0;
+    total += v < next ? -v : v;
+  }
+  return total;
+}
+
+export const layerName = (z) => GREEK[z];
+export const cellName = (w) => toRoman(w + 1);
+
 export function squareName(shape, index) {
   const coord = toCoord(shape, index);
   if (shape.length === 1) return FILES[coord[0]];
   let name = FILES[coord[0]] + (coord[1] + 1);
-  for (let axis = 2; axis < shape.length; axis++) name += ':' + (coord[axis] + 1);
+  if (shape.length >= 3) name = GREEK[coord[2]] + name;
+  if (shape.length >= 4) name = toRoman(coord[3] + 1) + name;
+  // Beyond four axes there is no obvious alphabet left; fall back to suffixes.
+  for (let axis = 4; axis < shape.length; axis++) name += ':' + (coord[axis] + 1);
   return name;
 }
 
 export function parseSquare(shape, name) {
-  const parts = name.split(':');
-  const head = parts[0];
+  const [head, ...rest] = name.split(':');
   const coord = new Array(shape.length).fill(0);
-  coord[0] = FILES.indexOf(head[0]);
-  if (shape.length > 1) coord[1] = parseInt(head.slice(1), 10) - 1;
-  for (let axis = 2; axis < shape.length; axis++) coord[axis] = parseInt(parts[axis - 1], 10) - 1;
+  let i = 0;
+  if (shape.length >= 4) {
+    let roman = '';
+    while (i < head.length && head[i] in ROMAN_VALUE) roman += head[i++];
+    coord[3] = fromRoman(roman) - 1;
+  }
+  if (shape.length >= 3) coord[2] = GREEK.indexOf(head[i++]);
+  coord[0] = FILES.indexOf(head[i++]);
+  if (shape.length > 1) coord[1] = parseInt(head.slice(i), 10) - 1;
+  rest.forEach((part, k) => { coord[4 + k] = parseInt(part, 10) - 1; });
   return toIndex(shape, coord);
 }
 

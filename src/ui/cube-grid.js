@@ -148,6 +148,8 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       quad.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centers, 3));
       quad.setAttribute('aCell', new THREE.InstancedBufferAttribute(atlasCells, 2));
       quad.setAttribute('aHidden', new THREE.InstancedBufferAttribute(new Float32Array(occupied.length), 1));
+      quad.setAttribute('aScale', new THREE.InstancedBufferAttribute(new Float32Array(occupied.length).fill(1), 1));
+      quad.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(occupied.length).fill(1), 1));
       pieceMesh = new THREE.Mesh(quad, new THREE.ShaderMaterial({
         vertexShader: PIECE_VERTEX,
         fragmentShader: PIECE_FRAGMENT,

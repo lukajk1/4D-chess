@@ -133,6 +133,25 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   });
   pointColors.set(cellColors);
 
+  // A vertex where cells meet has one copy per cell. While those copies sit on
+  // top of each other they show the average of every owning cell's colour.
+  const avgColors = new Float32Array(slotCount * 3);
+  if (is4D) {
+    const sum = new Map();   // lattice index -> [r, g, b, count]
+    slots.forEach((slot, s) => {
+      if (!slot.cell) return;
+      const a = sum.get(slot.lattice) ?? [0, 0, 0, 0];
+      for (let k = 0; k < 3; k++) a[k] += cellColors[s * 3 + k];
+      a[3]++;
+      sum.set(slot.lattice, a);
+    });
+    slots.forEach((slot, s) => {
+      const a = sum.get(slot.lattice);
+      if (!a) { avgColors.set(cellColors.subarray(s * 3, s * 3 + 3), s * 3); return; }
+      for (let k = 0; k < 3; k++) avgColors[s * 3 + k] = a[k] / a[3];
+    });
+  }
+
   // ---- unfolding, as 4D hinge rotations projected to 3D
   //
   // Each cell turns a quarter turn about the face it shares with its parent,
@@ -295,10 +314,28 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     scene.add(cellFrame);
   }
 
+  // Every slot copy of an occupied square gets a sprite. The copy in the
+  // piece's own w cell -- its home cube -- is the piece itself; the rest are
+  // ghosts, faint reminders that one square appears in several cells. Ghosts
+  // are listed first so home pieces draw over them wherever they coincide.
+  const GHOST_ALPHA = 0.3;
+  const pieceInstances = [];
+  pieceIndices.forEach((lattice, i) => {
+    const copies = [];
+    for (let s = 0; s < slotCount; s++) if (slotLattice[s] === lattice) copies.push(s);
+    const home = copies.find((s) => slots[s].cell?.axis === 3) ?? copies[0];
+    for (const s of copies) {
+      pieceInstances.push({ piece: i, lattice, slot: s, home: s === home, homeSlot: home });
+    }
+  });
+  pieceInstances.sort((a, b) => Number(a.home) - Number(b.home));
+
   // ---- pieces as one instanced, billboarded quad
   let pieceMesh = null;
   let pieceCenters = null;
   let pieceHidden = null;
+  let pieceScale = null;
+  let pieceAlpha = null;
   let atlas = null;
   if (pieceCount) {
     const chars = [...new Set(pieceIndices.map((i) => pos.get(i)))];
@@ -310,17 +347,22 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     ]), 3));
     quad.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
     quad.setIndex([0, 1, 2, 0, 2, 3]);
-    quad.instanceCount = pieceCount;
+    const instanceCount = pieceInstances.length;
+    quad.instanceCount = instanceCount;
 
-    pieceCenters = new Float32Array(pieceCount * 3);
-    pieceHidden = new Float32Array(pieceCount);
-    const cells = new Float32Array(pieceCount * 2);
-    pieceIndices.forEach((squareIndex, i) => {
-      cells.set(atlas.index.get(pos.get(squareIndex)), i * 2);
+    pieceCenters = new Float32Array(instanceCount * 3);
+    pieceHidden = new Float32Array(instanceCount);
+    pieceScale = new Float32Array(instanceCount).fill(1);
+    pieceAlpha = new Float32Array(instanceCount).fill(1);
+    const atlasCells = new Float32Array(instanceCount * 2);
+    pieceInstances.forEach((inst, k) => {
+      atlasCells.set(atlas.index.get(pos.get(inst.lattice)), k * 2);
     });
     quad.setAttribute('aCenter', new THREE.InstancedBufferAttribute(pieceCenters, 3));
-    quad.setAttribute('aCell', new THREE.InstancedBufferAttribute(cells, 2));
+    quad.setAttribute('aCell', new THREE.InstancedBufferAttribute(atlasCells, 2));
     quad.setAttribute('aHidden', new THREE.InstancedBufferAttribute(pieceHidden, 1));
+    quad.setAttribute('aScale', new THREE.InstancedBufferAttribute(pieceScale, 1));
+    quad.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(pieceAlpha, 1));
 
     pieceMesh = new THREE.Mesh(quad, new THREE.ShaderMaterial({
       vertexShader: PIECE_VERTEX,
@@ -330,6 +372,9 @@ export function createSpatialView(pos, onSelect, glyphFor) {
         uGrid: { value: new THREE.Vector2(atlas.cols, atlas.rows) },
         uSize: { value: 0.85 },
       },
+      // Ghost copies are translucent, so sprites blend rather than alpha-test.
+      transparent: true,
+      depthWrite: false,
     }));
     pieceMesh.frustumCulled = false;
     pieceMesh.renderOrder = 2;
@@ -362,6 +407,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   let spacing = 1;
   let unfoldT = 0;
   let unfoldTarget = 0;
+  let colourMode = 'cell';
   let layer = null;
   let cellFilter = null;
   let selected = null;
@@ -398,6 +444,25 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     haloGeometry.attributes.position.needsUpdate = true;
     haloGeometry.attributes.aAlpha.needsUpdate = true;
     haloGeometry.computeBoundingSphere();
+  }
+
+  // Coincident copies of a shared vertex show their cells' average; each one
+  // resolves to its own cell's colour as that cell swings away from the rest.
+  function applyColors() {
+    if (colourMode === 'board') {
+      pointColors.set(boardColors);
+    } else if (!is4D) {
+      pointColors.set(cellColors);
+    } else {
+      for (let s = 0; s < slotCount; s++) {
+        const ci = slotCell[s];
+        const p = ci < 0 ? 1 : angles[ci] / (Math.PI / 2);
+        for (let k = 0; k < 3; k++) {
+          pointColors[s * 3 + k] = avgColors[s * 3 + k] * (1 - p) + cellColors[s * 3 + k] * p;
+        }
+      }
+    }
+    pointGeometry.attributes.aColor.needsUpdate = true;
   }
 
   function writeCellFrame(K, g, shift) {
@@ -440,6 +505,28 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     pointGeometry.attributes.position.needsUpdate = true;
     pointGeometry.attributes.aSize.needsUpdate = true;
     pointGeometry.computeBoundingSphere();
+    applyColors();
+    if (is4D && pieceMesh) {
+      // Every sprite follows its own slot and scales with the lattice spacing
+      // there. A ghost stays invisible while it still coincides with the home
+      // copy and fades in as the unfold carries it away.
+      pieceInstances.forEach((inst, k) => {
+        const s = inst.slot;
+        pieceCenters.set(positions.subarray(s * 3, s * 3 + 3), k * 3);
+        pieceScale[k] = pointSize[s] / basePointSize;
+        if (inst.home) { pieceAlpha[k] = 1; return; }
+        const h = inst.homeSlot * 3;
+        const apart = Math.hypot(
+          positions[s * 3] - positions[h],
+          positions[s * 3 + 1] - positions[h + 1],
+          positions[s * 3 + 2] - positions[h + 2],
+        );
+        pieceAlpha[k] = GHOST_ALPHA * Math.min(1, apart / 0.6);
+      });
+      pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
+      pieceMesh.geometry.attributes.aScale.needsUpdate = true;
+      pieceMesh.geometry.attributes.aAlpha.needsUpdate = true;
+    }
     if (is4D) writeCellFrame(K, g, shift);
     syncHalo();
   }
@@ -455,9 +542,11 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     edgeGeometry.attributes.position.needsUpdate = true;
     edgeGeometry.computeBoundingSphere();
 
-    if (pieceMesh) {
-      pieceIndices.forEach((squareIndex, i) => {
-        pieceCenters.set(latticeFolded.subarray(squareIndex * 3, squareIndex * 3 + 3), i * 3);
+    // In 4D the pieces are placed per slot in writeSlotPositions, which has
+    // already run; this folded-lattice path is for the 3D board only.
+    if (pieceMesh && !is4D) {
+      pieceInstances.forEach((inst, k) => {
+        pieceCenters.set(latticeFolded.subarray(inst.lattice * 3, inst.lattice * 3 + 3), k * 3);
       });
       pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
     }
@@ -490,8 +579,9 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     edgeGeometry.attributes.aAlpha.needsUpdate = true;
 
     if (pieceMesh) {
-      pieceIndices.forEach((squareIndex, i) => {
-        pieceHidden[i] = showPieces && (layer === null || coords[squareIndex][2] === layer) ? 0 : 1;
+      // Sprites answer to the same layer and cell filters as their slots.
+      pieceInstances.forEach((inst, k) => {
+        pieceHidden[k] = showPieces && visible(inst.slot) ? 0 : 1;
       });
       pieceMesh.geometry.attributes.aHidden.needsUpdate = true;
     }
@@ -581,12 +671,11 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     applyFilters();
   });
   root.querySelector('[aria-label="Point colouring"]')?.addEventListener('change', (e) => {
-    const byBoard = e.target.value === 'board';
-    pointColors.set(byBoard ? boardColors : cellColors);
-    pointGeometry.attributes.aColor.needsUpdate = true;
+    colourMode = e.target.value;
+    applyColors();
     // The legend names cells, so it only applies to the cell colouring.
     const legend = root.querySelector('.w-legend');
-    if (legend) legend.hidden = byBoard;
+    if (legend) legend.hidden = colourMode === 'board';
     needsRender = true;
   });
   root.querySelector('input[type=range]').addEventListener('input', (e) => {

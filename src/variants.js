@@ -11,24 +11,32 @@ const BACK_RANKS = {
 
 const middleLayers = (n) => [Math.floor((n - 1) / 2), Math.ceil((n - 1) / 2)];
 
-function cubeVariant(n) {
-  const pos = new Position({ shape: [n, n, n] });
+// Lays out both armies on a cube: back rank on the near face of every layer,
+// royals only on the middle layers, pawns when there is room. `place` gets
+// cube coordinates and the piece, so callers decide where the cube lives.
+function layoutArmies(n, place) {
   const ranks = BACK_RANKS[n];
   const royalLayers = middleLayers(n);
   for (let z = 0; z < n; z++) {
     const back = royalLayers.includes(z) ? ranks.royal : ranks.plain;
     for (let x = 0; x < n; x++) {
       if (back[x] !== '.') {
-        pos.set(pos.index([x, 0, z]), back[x]);
-        pos.set(pos.index([x, n - 1, z]), back[x].toLowerCase());
+        place(x, 0, z, back[x]);
+        place(x, n - 1, z, back[x].toLowerCase());
       }
       // A 4-wide board has no room for pawns without filling every square.
       if (n >= 6) {
-        pos.set(pos.index([x, 1, z]), 'P');
-        pos.set(pos.index([x, n - 2, z]), 'p');
+        place(x, 1, z, 'P');
+        place(x, n - 2, z, 'p');
       }
     }
   }
+  return royalLayers;
+}
+
+function cubeVariant(n) {
+  const pos = new Position({ shape: [n, n, n] });
+  const royalLayers = layoutArmies(n, (x, y, z, piece) => pos.set(pos.index([x, y, z]), piece));
   return {
     id: n === 8 ? '3d' : `3d-${n}`,
     name: `3D chess (${n}³)`,
@@ -43,8 +51,20 @@ function cubeVariant(n) {
 
 function hypercubeVariant(n) {
   const pos = new Position({ shape: [n, n, n, n] });
+  // The 3D game pulled apart along w: white's half lives in the interior cube
+  // (w = 1) and black's in the outer cube (w = n), facing each other across the
+  // fourth axis with open board between.
+  const royalLayers = layoutArmies(n, (x, y, z, piece) => {
+    const white = piece === piece.toUpperCase();
+    // layoutArmies mirrors black across y so the two sides face along y. Here
+    // they face along w instead, so undo that mirror: both armies share one
+    // (x, y, z) footprint and differ only in w, putting the entire separation
+    // on the single axis being pulled apart -- as e1 and e8 share a file.
+    pos.set(pos.index([x, white ? y : n - 1 - y, z, white ? 0 : n - 1]), piece);
+  });
   return {
     id: n === 8 ? '4d' : `4d-${n}`,
+    royalLayers,
     name: `4D chess (${n}⁴)`,
     shape: pos.shape,
     inspectionOnly: true,

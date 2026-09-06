@@ -100,18 +100,23 @@ export const PIECE_VERTEX = `
   attribute vec3 aCenter;
   attribute vec2 aCell;
   attribute float aHidden;
+  attribute float aScale;
+  attribute float aAlpha;
   varying vec2 vUv;
   varying vec2 vCell;
   varying float vHidden;
+  varying float vAlpha;
   uniform float uSize;
   void main() {
     vUv = uv;
     vCell = aCell;
     vHidden = aHidden;
+    vAlpha = aAlpha;
     // Billboard by offsetting in view space, which faces the camera under
-    // both projections without any per-frame CPU work.
+    // both projections without any per-frame CPU work. aScale lets a piece
+    // track the local lattice spacing, which the 4D perspective varies.
     vec4 mv = modelViewMatrix * vec4(aCenter, 1.0);
-    mv.xy += position.xy * uSize;
+    mv.xy += position.xy * uSize * aScale;
     gl_Position = projectionMatrix * mv;
   }`;
 
@@ -119,6 +124,7 @@ export const PIECE_FRAGMENT = `
   varying vec2 vUv;
   varying vec2 vCell;
   varying float vHidden;
+  varying float vAlpha;
   uniform sampler2D uAtlas;
   uniform vec2 uGrid;
   void main() {
@@ -126,9 +132,10 @@ export const PIECE_FRAGMENT = `
     // Atlas rows run top-down; the quad's v runs bottom-up.
     vec2 uv = (vCell + vec2(vUv.x, 1.0 - vUv.y)) / uGrid;
     vec4 texel = texture2D(uAtlas, uv);
-    // Alpha test rather than blending, so glyphs need no depth sorting.
+    // The glyph edge is still alpha-tested for a crisp outline; the instance
+    // alpha then lets ghost copies draw translucent.
     if (texel.a < 0.4) discard;
-    gl_FragColor = vec4(texel.rgb, 1.0);
+    gl_FragColor = vec4(texel.rgb, vAlpha);
   }`;
 
 export function buildGlyphAtlas(chars, glyphFor) {
