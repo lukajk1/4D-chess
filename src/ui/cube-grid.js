@@ -2,56 +2,54 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
+import { tesseractCells, localIndexIn } from './tesseract.js';
 import {
-  W_COLORS, readTheme, LINE_VERTEX, LINE_FRAGMENT,
+  CELL_COLORS, readTheme, LINE_VERTEX, LINE_FRAGMENT,
   PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas, makePointCloud,
 } from './gl-shared.js';
 
-// The eight cubes that compose the tesseract, drawn as one canvas with eight
+// The eight cubic cells of the tesseract, drawn as one canvas with eight
 // scissored viewports rather than eight WebGL contexts -- browsers cap context
 // count, and the master viewer already holds one.
 //
 // All eight share a single camera, so orbiting compares the same angle across
-// every cube. Each keeps its own scene because it holds different geometry.
+// every cell. Cells that meet at a face share vertices, so selecting a point
+// can light up as many as four of these cubes at once.
 
 export function createCubeGrid(pos, onSelect, glyphFor) {
-  const [sizeX, sizeY, sizeZ, cubeCount] = pos.shape;
-  const perCube = sizeX * sizeY * sizeZ;
   const theme = readTheme();
-  const center = [(sizeX - 1) / 2, (sizeY - 1) / 2, (sizeZ - 1) / 2];
+  const cells = tesseractCells(pos.shape);
 
-  // ---- DOM: labelled cells with one canvas laid over them
   const root = document.createElement('section');
   root.className = 'cube-grid-panel';
   root.innerHTML = `
     <div class="cube-heading">
       <div>
-        <span class="eyebrow">Component cubes</span>
-        <h2>Eight cubes, one angle.</h2>
+        <span class="eyebrow">The eight cells</span>
+        <h2>One cube per face of the hypercube.</h2>
       </div>
       <button class="reset-grid">Reset view</button>
     </div>
-    <p class="hint">Each cube is one w layer of the lattice above. Drag any cube to orbit all eight together; selecting a point anywhere highlights it in its own cube.</p>`;
+    <p class="hint">Each cell pins one axis to its lowest or highest value. <strong>w = 1</strong> is the interior cube and <strong>w = 8</strong> the outer one; the six between them join those two face to face. Cells share the vertices along their common faces, so one point can appear in several cubes.</p>`;
 
   const grid = document.createElement('div');
   grid.className = 'cube-grid';
-  const cells = [];
-  for (let w = 0; w < cubeCount; w++) {
-    const cell = document.createElement('div');
-    cell.className = 'cube-cell';
-    cell.dataset.w = String(w);
-    cell.style.setProperty('--w-color', W_COLORS[w]);
+  const cellEls = cells.map((cell, i) => {
+    const el = document.createElement('div');
+    el.className = `cube-cell role-${cell.role}`;
+    el.dataset.cell = String(i);
+    el.style.setProperty('--w-color', CELL_COLORS[cell.id]);
     const label = document.createElement('span');
     label.className = 'cube-cell-label';
-    label.textContent = `w = ${w + 1}`;
-    cell.append(label);
-    grid.append(cell);
-    cells.push(cell);
-  }
+    label.innerHTML = `${cell.label}${cell.role === 'face' ? '' : ` <em>${cell.role}</em>`}`;
+    el.append(label);
+    grid.append(el);
+    return el;
+  });
   const canvas = document.createElement('canvas');
   canvas.className = 'cube-grid-canvas';
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', 'The eight component cubes. Drag to orbit all of them; click a point to inspect it.');
+  canvas.setAttribute('aria-label', 'The eight cells of the tesseract. Drag to orbit all of them; click a point to inspect it.');
   grid.append(canvas);
   root.append(grid);
 
@@ -60,12 +58,13 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
   caption.setAttribute('aria-live', 'polite');
   root.append(caption);
 
-  // ---- renderer, shared camera
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.autoClear = false;
 
-  const radius = Math.hypot(...center) + 0.9;
+  // Every cell spans the same three-axis extent on an even-sided board.
+  const span = cells[0].size.map((n) => (n - 1) / 2);
+  const radius = Math.hypot(...span) + 0.9;
   const camera = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.1, radius * 40);
   camera.position.set(radius * 2.1, radius * 1.7, radius * 2.6);
 
@@ -76,29 +75,28 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
   controls.rotateSpeed = 0.85;
 
   const pointUniforms = { uHalfHeight: { value: 120 }, uPerspective: { value: 0 } };
-
-  // ---- one scene per cube
   const pieceChars = [...new Set(pos.squares.filter(Boolean))];
   const atlas = pieceChars.length ? buildGlyphAtlas(pieceChars, glyphFor) : null;
 
-  const localCoord = (local) => [
-    local % sizeX,
-    Math.floor(local / sizeX) % sizeY,
-    Math.floor(local / (sizeX * sizeY)) % sizeZ,
+  // A cell's three free axes become the cube's three spatial axes, in the same
+  // screen mapping the master viewer uses: second free axis goes up.
+  const localCoord = (cell, local) => [
+    local % cell.size[0],
+    Math.floor(local / cell.size[0]) % cell.size[1],
+    Math.floor(local / (cell.size[0] * cell.size[1])) % cell.size[2],
   ];
-  // Same axis mapping as the master viewer: z is up the screen, y goes back.
-  const worldOf = (c) => [c[0] - center[0], c[2] - center[2], -(c[1] - center[1])];
+  const worldOf = (c) => [c[0] - span[0], c[2] - span[2], -(c[1] - span[1])];
 
-  const cubes = cells.map((cell, w) => {
+  const cubes = cells.map((cell, i) => {
     const scene = new THREE.Scene();
-    const { geometry, material, points } = makePointCloud(perCube, pointUniforms);
+    const { geometry, material, points } = makePointCloud(cell.count, pointUniforms);
     const position = geometry.attributes.position.array;
     const color = geometry.attributes.aColor.array;
     const size = geometry.attributes.aSize.array;
     const scratch = new THREE.Color();
 
-    for (let local = 0; local < perCube; local++) {
-      const c = localCoord(local);
+    for (let local = 0; local < cell.count; local++) {
+      const c = localCoord(cell, local);
       position.set(worldOf(c), local * 3);
       scratch.set((c[0] + c[1] + c[2]) % 2 ? theme.dark : theme.light);
       color.set([scratch.r, scratch.g, scratch.b], local * 3);
@@ -107,50 +105,48 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
     geometry.computeBoundingSphere();
     scene.add(points);
 
-    // Twelve outline edges only: board grids are unreadable at this size.
+    // Twelve outline edges only: full board grids are unreadable this small.
     const corners = [];
-    for (const x of [0, sizeX - 1]) for (const y of [0, sizeY - 1]) for (const z of [0, sizeZ - 1]) corners.push([x, y, z]);
-    const edgePositions = [];
+    for (const a of [0, cell.size[0] - 1]) for (const b of [0, cell.size[1] - 1]) for (const c of [0, cell.size[2] - 1]) corners.push([a, b, c]);
+    const edges = [];
     for (let a = 0; a < corners.length; a++) {
       for (let b = a + 1; b < corners.length; b++) {
-        const differing = corners[a].reduce((n, v, i) => n + (v === corners[b][i] ? 0 : 1), 0);
-        if (differing !== 1) continue;
-        edgePositions.push(...worldOf(corners[a]), ...worldOf(corners[b]));
+        const differing = corners[a].reduce((n, v, k) => n + (v === corners[b][k] ? 0 : 1), 0);
+        if (differing === 1) edges.push(...worldOf(corners[a]), ...worldOf(corners[b]));
       }
     }
     const edgeGeometry = new THREE.BufferGeometry();
-    edgeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edgePositions), 3));
-    edgeGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(edgePositions.length / 3).fill(0.3), 1));
+    edgeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edges), 3));
+    edgeGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(edges.length / 3).fill(0.3), 1));
     const edgeMaterial = new THREE.ShaderMaterial({
       vertexShader: LINE_VERTEX,
       fragmentShader: LINE_FRAGMENT,
       transparent: true,
       depthWrite: false,
-      uniforms: { uColor: { value: new THREE.Color(theme.muted) } },
+      uniforms: { uColor: { value: new THREE.Color(CELL_COLORS[cell.id]) } },
     });
     scene.add(new THREE.LineSegments(edgeGeometry, edgeMaterial));
 
-    // Pieces belonging to this cube.
     let pieceMesh = null;
-    const locals = [];
-    for (let local = 0; local < perCube; local++) if (pos.get(w * perCube + local)) locals.push(local);
-    if (locals.length && atlas) {
+    const occupied = [];
+    for (let local = 0; local < cell.count; local++) if (pos.get(cell.indices[local])) occupied.push(local);
+    if (occupied.length && atlas) {
       const quad = new THREE.InstancedBufferGeometry();
       quad.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
         -0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0,
       ]), 3));
       quad.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
       quad.setIndex([0, 1, 2, 0, 2, 3]);
-      quad.instanceCount = locals.length;
-      const centers = new Float32Array(locals.length * 3);
-      const atlasCells = new Float32Array(locals.length * 2);
-      locals.forEach((local, i) => {
-        centers.set(worldOf(localCoord(local)), i * 3);
-        atlasCells.set(atlas.index.get(pos.get(w * perCube + local)), i * 2);
+      quad.instanceCount = occupied.length;
+      const centers = new Float32Array(occupied.length * 3);
+      const atlasCells = new Float32Array(occupied.length * 2);
+      occupied.forEach((local, k) => {
+        centers.set(worldOf(localCoord(cell, local)), k * 3);
+        atlasCells.set(atlas.index.get(pos.get(cell.indices[local])), k * 2);
       });
       quad.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centers, 3));
       quad.setAttribute('aCell', new THREE.InstancedBufferAttribute(atlasCells, 2));
-      quad.setAttribute('aHidden', new THREE.InstancedBufferAttribute(new Float32Array(locals.length), 1));
+      quad.setAttribute('aHidden', new THREE.InstancedBufferAttribute(new Float32Array(occupied.length), 1));
       pieceMesh = new THREE.Mesh(quad, new THREE.ShaderMaterial({
         vertexShader: PIECE_VERTEX,
         fragmentShader: PIECE_FRAGMENT,
@@ -164,7 +160,6 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       scene.add(pieceMesh);
     }
 
-    // Selection marker, shown only in the cube that owns the selected point.
     const halo = makePointCloud(1, pointUniforms);
     halo.geometry.attributes.aColor.array.set([...new THREE.Color(theme.selected)]);
     halo.geometry.attributes.aSize.array[0] = 0.52;
@@ -175,10 +170,9 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
     halo.points.frustumCulled = false;
     scene.add(halo.points);
 
-    return { scene, cell, geometry, material, edgeGeometry, edgeMaterial, pieceMesh, halo, points };
+    return { cell, scene, el: cellEls[i], geometry, material, edgeGeometry, edgeMaterial, pieceMesh, halo, points };
   });
 
-  // ---- sizing: the canvas covers the grid; each cell becomes a viewport
   let disposed = false;
   let needsRender = true;
 
@@ -186,7 +180,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
     const rect = grid.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     renderer.setSize(rect.width, rect.height, false);
-    const cellRect = cells[0].getBoundingClientRect();
+    const cellRect = cellEls[0].getBoundingClientRect();
     const aspect = (cellRect.width || 1) / (cellRect.height || 1);
     camera.left = -radius * aspect;
     camera.right = radius * aspect;
@@ -206,7 +200,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
     renderer.clear(true, true, true);
     renderer.setScissorTest(true);
     for (const cube of cubes) {
-      const r = cube.cell.getBoundingClientRect();
+      const r = cube.el.getBoundingClientRect();
       const left = r.left - rect.left;
       const bottom = rect.bottom - r.bottom;
       renderer.setViewport(left, bottom, r.width, r.height);
@@ -226,31 +220,27 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       needsRender = false;
     }
   }
-
   controls.addEventListener('change', () => { needsRender = true; });
 
-  // ---- picking: locate the cell under the pointer, then ray-cast its scene
   const raycaster = new THREE.Raycaster();
   raycaster.params.Points.threshold = 0.22;
   const pointer = new THREE.Vector2();
   let down = null;
 
-  canvas.addEventListener('pointerdown', (event) => {
-    down = { x: event.clientX, y: event.clientY };
-  });
+  canvas.addEventListener('pointerdown', (event) => { down = { x: event.clientX, y: event.clientY }; });
   canvas.addEventListener('pointerup', (event) => {
     if (!down) return;
     const moved = Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5;
     down = null;
     if (moved) return;
     for (const cube of cubes) {
-      const r = cube.cell.getBoundingClientRect();
+      const r = cube.el.getBoundingClientRect();
       if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) continue;
       pointer.x = ((event.clientX - r.left) / r.width) * 2 - 1;
       pointer.y = -((event.clientY - r.top) / r.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObject(cube.points, false);
-      if (hits.length) onSelect(Number(cube.cell.dataset.w) * perCube + hits[0].index);
+      if (hits.length) onSelect(cube.cell.indices[hits[0].index]);
       return;
     }
   });
@@ -270,19 +260,25 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
   return {
     element: root,
     update(index) {
-      const owner = index === null ? -1 : Math.floor(index / perCube);
-      cubes.forEach((cube, w) => {
-        cube.cell.classList.toggle('active', w === owner);
-        cube.halo.points.visible = w === owner;
-        if (w !== owner) return;
-        const c = localCoord(index % perCube);
-        cube.halo.geometry.attributes.position.array.set(worldOf(c));
+      let owners = 0;
+      for (const cube of cubes) {
+        const local = index === null ? -1 : localIndexIn(cube.cell, pos.shape, index);
+        const owns = local >= 0;
+        if (owns) owners++;
+        cube.el.classList.toggle('active', owns);
+        cube.halo.points.visible = owns;
+        if (!owns) continue;
+        cube.halo.geometry.attributes.position.array.set(worldOf(localCoord(cube.cell, local)));
         cube.halo.geometry.attributes.position.needsUpdate = true;
-      });
+      }
       const piece = index === null ? null : pos.get(index);
-      caption.textContent = index === null
-        ? `${cubeCount} cubes of ${perCube.toLocaleString()} positions each.`
-        : `${squareName(pos.shape, index)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · cube w = ${owner + 1}`;
+      if (index === null) {
+        caption.textContent = 'Eight cells of 512 positions each; 2,800 distinct points lie on them.';
+      } else if (owners === 0) {
+        caption.textContent = `${squareName(pos.shape, index)} · interior point — on none of the eight cells.`;
+      } else {
+        caption.textContent = `${squareName(pos.shape, index)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · on ${owners} cell${owners > 1 ? 's' : ''}`;
+      }
       needsRender = true;
     },
     destroy() {

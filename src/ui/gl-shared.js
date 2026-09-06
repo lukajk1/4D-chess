@@ -3,7 +3,41 @@ import * as THREE from 'three';
 // Shared between the master tesseract viewer and the per-cube grid, so both
 // draw points, wires and glyphs from the same shaders and the same atlas.
 
-export const W_COLORS = ['#698d88', '#629d8a', '#65ad82', '#87b975', '#b4bf70', '#d1b96e', '#dda275', '#df877a'];
+// One colour per cell of the tesseract. The six face cells double as the six
+// angular sectors of the master view, so a wedge and the interior-cube face it
+// springs from share a colour.
+export const CELL_COLORS = {
+  xmin: '#d1725a', xmax: '#e2a95c',
+  ymin: '#6fa86a', ymax: '#a9c163',
+  zmin: '#5f93c0', zmax: '#6fc4c4',
+  wmin: '#9b82c8', wmax: '#c87fb0',
+};
+
+export const SECTOR_IDS = ['xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax'];
+
+// Which face of the hypercube a point radiates towards: the axis with the
+// largest displacement from centre wins, exactly like cube-map face selection.
+//
+// Points on an edge or corner sit exactly on the plane between two sectors and
+// belong to neither. Handing every tie to the lowest axis skews the wedges
+// badly (120 points against 56 on an 8-cube), so ties are spread across the
+// tied axes by coordinate sum: deterministic, and even in aggregate.
+export function sectorOf(coord, shape) {
+  let best = -1;
+  const tied = [];
+  for (let a = 0; a < 3; a++) {
+    const magnitude = Math.abs(coord[a] - (shape[a] - 1) / 2);
+    if (magnitude > best + 1e-9) {
+      best = magnitude;
+      tied.length = 0;
+      tied.push(a);
+    } else if (Math.abs(magnitude - best) < 1e-9) {
+      tied.push(a);
+    }
+  }
+  const axis = tied[(coord[0] + coord[1] + coord[2]) % tied.length];
+  return 'xyz'[axis] + (coord[axis] - (shape[axis] - 1) / 2 >= 0 ? 'max' : 'min');
+}
 
 export const readTheme = () => {
   const style = getComputedStyle(document.documentElement);

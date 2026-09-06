@@ -345,3 +345,9 @@ dialog::backdrop { background: #0007; }
 .reset-grid { font-size: 12px; white-space: nowrap; }
 
 @media (max-width: 900px) { .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cube-explorer-4d .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Cell roles: the interior and outer cubes read differently from the six
+   face cells that join them. */
+.cube-cell.role-interior { border-style: dashed; }
+.cube-cell.role-outer { border-width: 2px; }
+.cube-cell-label em { font-style: normal; opacity: .65; }

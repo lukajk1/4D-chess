@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
+import { isInterior } from './tesseract.js';
 import {
-  W_COLORS, readTheme, POINT_VERTEX, POINT_FRAGMENT,
+  CELL_COLORS, SECTOR_IDS, sectorOf, readTheme, POINT_VERTEX, POINT_FRAGMENT,
   LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
 } from './gl-shared.js';
 
@@ -27,7 +28,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const root = document.createElement('section');
   root.className = 'cube-view';
   root.innerHTML = `
-    <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'Eight cubes. Four coordinates.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
+    <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
       <label>${is4D ? '3D camera' : 'Projection'} <select aria-label="Projection"><option value="orthographic">Orthographic</option><option value="perspective">Perspective</option></select></label>
       ${is4D ? `<label>Cube <select aria-label="Visible w cube"><option value="all">All 8 cubes</option>${Array.from({ length: pos.shape[3] }, (_, w) => `<option value="${w}">w = ${w + 1}</option>`).join('')}</select></label>` : ''}
@@ -47,11 +48,15 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   if (is4D) {
     const legend = document.createElement('div');
     legend.className = 'w-legend';
-    legend.innerHTML = W_COLORS.map((color, w) => `<span><i style="background:${color}"></i>w${w + 1}</span>`).join('');
+    legend.innerHTML = SECTOR_IDS.map((id) => {
+      const axis = 'xyz'.indexOf(id[0]);
+      const value = id.endsWith('min') ? 1 : pos.shape[axis];
+      return `<span><i style="background:${CELL_COLORS[id]}"></i>${id[0]} = ${value}</span>`;
+    }).join('');
     root.append(legend);
     const explanation = document.createElement('p');
     explanation.className = 'hint';
-    explanation.textContent = 'Perspective along w nests the cubes: w1 innermost, w8 outermost. Dashed lines join matching corners across w.';
+    explanation.textContent = 'Radius carries w: the w = 1 cell is the inner cube, w = 8 the outer. Colour carries the angular sector, so a wedge shares its colour with the face of the inner cube it grows from — that is where each of the six remaining cells lives. Points on no cell stay faint.';
     root.append(explanation);
   }
 
@@ -91,11 +96,18 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const scratch = new THREE.Color();
 
   const basePointSize = is4D ? 0.09 : 0.13;
+  // Points strictly inside the hypercube lie on none of the eight cells, so
+  // they stay faint and small: present and selectable, but not competing with
+  // the cell structure.
+  const baseAlpha = new Float32Array(count).fill(1);
   for (let i = 0; i < count; i++) {
     const parity = coords[i].reduce((a, b) => a + b, 0) % 2;
-    scratch.set(is4D ? W_COLORS[coords[i][3]] : parity ? theme.dark : theme.light);
+    // Colour carries the angular sector; w is already shown as shell radius.
+    scratch.set(is4D ? CELL_COLORS[sectorOf(coords[i], pos.shape)] : parity ? theme.dark : theme.light);
     pointColors.set([scratch.r, scratch.g, scratch.b], i * 3);
-    pointSize[i] = basePointSize;
+    const inside = is4D && isInterior(pos.shape, i);
+    pointSize[i] = inside ? basePointSize * 0.62 : basePointSize;
+    baseAlpha[i] = inside ? 0.22 : 1;
   }
 
   const pointGeometry = new THREE.BufferGeometry();
@@ -119,22 +131,36 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const edgePairs = [];
   const [maxX, maxY, maxZ] = pos.shape.map((n) => n - 1);
   const at = (c) => pos.index(c);
-  for (let w = 0; w < (pos.shape[3] ?? 1); w++) {
-    const c = (x, y, z) => (is4D ? [x, y, z, w] : [x, y, z]);
-    const zList = is4D ? [0, maxZ] : Array.from({ length: pos.shape[2] }, (_, i) => i);
-    for (const z of zList) {
-      const xList = is4D ? [0, maxX] : Array.from({ length: pos.shape[0] }, (_, i) => i);
-      const yList = is4D ? [0, maxY] : Array.from({ length: pos.shape[1] }, (_, i) => i);
-      for (const x of xList) edgePairs.push({ a: at(c(x, 0, z)), b: at(c(x, maxY, z)), z, w });
-      for (const y of yList) edgePairs.push({ a: at(c(0, y, z)), b: at(c(maxX, y, z)), z, w });
-    }
-    for (const x of [0, maxX]) {
-      for (const y of [0, maxY]) {
-        edgePairs.push({ a: at(c(x, y, 0)), b: at(c(x, y, maxZ)), z: null, w });
-        if (is4D && w < pos.shape[3] - 1) {
-          for (const z of [0, maxZ]) edgePairs.push({ a: at(c(x, y, z)), b: at([x, y, z, w + 1]), z: null, w });
-        }
+  const cubeEdges = (corners, make) => {
+    for (let a = 0; a < corners.length; a++) {
+      for (let b = a + 1; b < corners.length; b++) {
+        const differing = corners[a].reduce((n, v, i) => n + (v === corners[b][i] ? 0 : 1), 0);
+        if (differing === 1) make(corners[a], corners[b]);
       }
+    }
+  };
+  const boxCorners = [];
+  for (const x of [0, maxX]) for (const y of [0, maxY]) for (const z of [0, maxZ]) boxCorners.push([x, y, z]);
+
+  if (is4D) {
+    // A tesseract frame: the interior cell (w minimum), the outer cell (w
+    // maximum), and the eight edges joining matching corners. Drawing a box at
+    // every w produced eight nested cubes, which is not a tesseract -- the
+    // cells of a tesseract meet at faces.
+    const maxW = pos.shape[3] - 1;
+    for (const w of [0, maxW]) {
+      cubeEdges(boxCorners, (a, b) => edgePairs.push({ a: at([...a, w]), b: at([...b, w]), z: null, w: null }));
+    }
+    for (const corner of boxCorners) {
+      edgePairs.push({ a: at([...corner, 0]), b: at([...corner, maxW]), z: null, w: null });
+    }
+  } else {
+    for (let z = 0; z < pos.shape[2]; z++) {
+      for (let x = 0; x < pos.shape[0]; x++) edgePairs.push({ a: at([x, 0, z]), b: at([x, maxY, z]), z, w: null });
+      for (let y = 0; y < pos.shape[1]; y++) edgePairs.push({ a: at([0, y, z]), b: at([maxX, y, z]), z, w: null });
+    }
+    for (const x of [0, maxX]) for (const y of [0, maxY]) {
+      edgePairs.push({ a: at([x, y, 0]), b: at([x, y, maxZ]), z: null, w: null });
     }
   }
 
@@ -261,11 +287,12 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     && (wLayer === null || coords[i][3] === wLayer);
 
   function applyFilters() {
-    for (let i = 0; i < count; i++) pointAlpha[i] = visible(i) ? 1 : 0.06;
+    for (let i = 0; i < count; i++) pointAlpha[i] = visible(i) ? baseAlpha[i] : 0.06;
     pointGeometry.attributes.aAlpha.needsUpdate = true;
 
     edgePairs.forEach((edge, i) => {
-      const on = (wLayer === null || edge.w === wLayer) && (layer === null || edge.z === layer || edge.z === null);
+      const on = (wLayer === null || edge.w === null || edge.w === wLayer)
+        && (layer === null || edge.z === layer || edge.z === null);
       edgeAlpha[i * 2] = edgeAlpha[i * 2 + 1] = on ? 0.35 : 0.04;
     });
     edgeGeometry.attributes.aAlpha.needsUpdate = true;
@@ -403,7 +430,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       halo.visible = selected !== null;
       const piece = selected === null ? null : pos.get(selected);
       caption.textContent = selected === null
-        ? `${count.toLocaleString()} positions · ${pieceCount} pieces${is4D ? ' · Each w cube holds 512 positions.' : ' · Kings and queens on layers 4 and 5.'}`
+        ? `${count.toLocaleString()} positions · ${pieceCount} pieces${is4D ? ' · 2,800 lie on the eight cells, 1,296 strictly inside.' : ' · Kings and queens on layers 4 and 5.'}`
         : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · ${coords[selected].map((v, axis) => `${'xyzw'[axis]} ${v + 1}`).join(', ')}`;
       needsRender = true;
     },
