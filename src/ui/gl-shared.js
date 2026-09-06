@@ -66,7 +66,10 @@ export const POINT_VERTEX = `
     // projectionMatrix[1][1] converts world units to clip units for both
     // camera types, so one expression covers orthographic and perspective.
     float px = aSize * uHalfHeight * projectionMatrix[1][1];
-    gl_PointSize = uPerspective > 0.5 ? px / max(-mv.z, 0.0001) : px;
+    px = uPerspective > 0.5 ? px / max(-mv.z, 0.0001) : px;
+    // Below about 1.5px the round mask below is nearly all feathered edge and
+    // the point disappears, so keep a floor regardless of zoom or canvas size.
+    gl_PointSize = max(px, 1.5);
   }`;
 
 export const POINT_FRAGMENT = `

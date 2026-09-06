@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
-import { isInterior } from './tesseract.js';
+import { isInterior, tesseractCells } from './tesseract.js';
 import {
   CELL_COLORS, SECTOR_IDS, sectorOf, readTheme, POINT_VERTEX, POINT_FRAGMENT,
   LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
@@ -21,6 +21,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const count = pos.squares.length;
   const coords = pos.squares.map((_, i) => pos.coord(i));
   const center = pos.shape.map((n) => (n - 1) / 2);
+  const cells = is4D ? tesseractCells(pos.shape) : [];
   const pieceIndices = pos.squares.map((p, i) => (p ? i : -1)).filter((i) => i >= 0);
   const pieceCount = pieceIndices.length;
 
@@ -31,7 +32,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
       <label>${is4D ? '3D camera' : 'Projection'} <select aria-label="Projection"><option value="orthographic">Orthographic</option><option value="perspective">Perspective</option></select></label>
-      ${is4D ? `<label>Cube <select aria-label="Visible w cube"><option value="all">All 8 cubes</option>${Array.from({ length: pos.shape[3] }, (_, w) => `<option value="${w}">w = ${w + 1}</option>`).join('')}</select></label>` : ''}
+      ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
       <label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
@@ -95,7 +96,11 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const pointSize = new Float32Array(count);
   const scratch = new THREE.Color();
 
-  const basePointSize = is4D ? 0.09 : 0.13;
+  // The w perspective expands outer shells and contracts inner ones; sizing
+  // points by the same factor keeps the lattice looking evenly dense instead
+  // of dense in the middle and invisible at the rim.
+  const wScaleOf = (c) => (is4D ? 2.5 / (2.5 - (c[3] - center[3]) / (center[3] || 1)) : 1);
+  const basePointSize = is4D ? 0.19 : 0.16;
   // Points strictly inside the hypercube lie on none of the eight cells, so
   // they stay faint and small: present and selectable, but not competing with
   // the cell structure.
@@ -106,7 +111,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     scratch.set(is4D ? CELL_COLORS[sectorOf(coords[i], pos.shape)] : parity ? theme.dark : theme.light);
     pointColors.set([scratch.r, scratch.g, scratch.b], i * 3);
     const inside = is4D && isInterior(pos.shape, i);
-    pointSize[i] = inside ? basePointSize * 0.62 : basePointSize;
+    pointSize[i] = basePointSize * wScaleOf(coords[i]) * (inside ? 0.62 : 1);
     baseAlpha[i] = inside ? 0.22 : 1;
   }
 
@@ -242,7 +247,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // ---- state
   let spacing = 1;
   let layer = null;
-  let wLayer = null;
+  let cellFilter = null;
   let selected = null;
   let showPieces = true;
   let disposed = false;
@@ -252,7 +257,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // eight cubes nest instead of overlapping. Positions in `pos` never change.
   function worldPosition(i, out) {
     const c = coords[i];
-    const wScale = is4D ? 2.5 / (2.5 - (c[3] - center[3]) / (center[3] || 1)) : 1;
+    const wScale = wScaleOf(c);
     out[0] = (c[0] - center[0]) * wScale;
     out[1] = (c[2] - center[2]) * spacing * wScale;
     out[2] = -(c[1] - center[1]) * wScale;
@@ -283,16 +288,19 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     needsRender = true;
   }
 
+  // A cell pins one axis, so membership is a single coordinate test. Cells
+  // overlap where they share a face, unlike the w shells this replaced.
   const visible = (i) => (layer === null || coords[i][2] === layer)
-    && (wLayer === null || coords[i][3] === wLayer);
+    && (cellFilter === null || coords[i][cellFilter.axis] === cellFilter.at);
 
   function applyFilters() {
     for (let i = 0; i < count; i++) pointAlpha[i] = visible(i) ? baseAlpha[i] : 0.06;
     pointGeometry.attributes.aAlpha.needsUpdate = true;
 
     edgePairs.forEach((edge, i) => {
-      const on = (wLayer === null || edge.w === null || edge.w === wLayer)
-        && (layer === null || edge.z === layer || edge.z === null);
+      // The tesseract frame stays whole; only the 3D board grids answer to
+      // the layer control.
+      const on = layer === null || edge.z === layer || edge.z === null;
       edgeAlpha[i * 2] = edgeAlpha[i * 2 + 1] = on ? 0.35 : 0.04;
     });
     edgeGeometry.attributes.aAlpha.needsUpdate = true;
@@ -379,13 +387,13 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   });
   root.querySelector('[aria-label="Projection"]').addEventListener('change', (e) => setCamera(e.target.value));
   const layerSelect = root.querySelector('[aria-label="Visible layer"]');
-  const wSelect = root.querySelector('[aria-label="Visible w cube"]');
+  const cellSelect = root.querySelector('[aria-label="Visible cell"]');
   layerSelect.addEventListener('change', () => {
     layer = layerSelect.value === 'all' ? null : Number(layerSelect.value);
     applyFilters();
   });
-  wSelect?.addEventListener('change', () => {
-    wLayer = wSelect.value === 'all' ? null : Number(wSelect.value);
+  cellSelect?.addEventListener('change', () => {
+    cellFilter = cellSelect.value === 'all' ? null : cells[Number(cellSelect.value)];
     applyFilters();
   });
   root.querySelector('input[type=range]').addEventListener('input', (e) => {
@@ -421,7 +429,18 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       selected = index;
       if (selected !== null) {
         if (layer !== null) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
-        if (wLayer !== null && wSelect) { wLayer = coords[selected][3]; wSelect.value = String(wLayer); applyFilters(); }
+        if (cellFilter !== null && cellSelect) {
+          // Keep the filtered cell if it holds the selection; otherwise follow
+          // the selection to one of its cells, or drop the filter when the
+          // point is interior and belongs to none.
+          const owners = cells.filter((cell) => coords[selected][cell.axis] === cell.at);
+          const next = owners.includes(cellFilter) ? cellFilter : owners[0] ?? null;
+          if (next !== cellFilter) {
+            cellFilter = next;
+            cellSelect.value = next ? String(cells.indexOf(next)) : 'all';
+            applyFilters();
+          }
+        }
         worldPosition(selected, tmp);
         haloGeometry.attributes.position.array.set(tmp);
         haloGeometry.attributes.position.needsUpdate = true;

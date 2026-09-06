@@ -100,7 +100,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       position.set(worldOf(c), local * 3);
       scratch.set((c[0] + c[1] + c[2]) % 2 ? theme.dark : theme.light);
       color.set([scratch.r, scratch.g, scratch.b], local * 3);
-      size[local] = 0.16;
+      size[local] = 0.3;
     }
     geometry.computeBoundingSphere();
     scene.add(points);

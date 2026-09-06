@@ -1,0 +1,249 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { squareName } from '../core/notation.js';
+import { tesseractCells, localIndexIn } from './tesseract.js';
+import { CELL_COLORS, readTheme } from './gl-shared.js';
+
+// The tesseract unfolded into 3D: the interior cell sits at the centre and the
+// six face cells attach to the six faces it shares with them, so adjacency in
+// 4D becomes adjacency you can walk around. The outer cell has no free face
+// left on the centre cube, so it continues the column past the bottom arm --
+// the standard hypercube net.
+//
+// Cells are drawn as translucent solids rather than point clouds: at this scale
+// the shape of each cell and how it joins its neighbours is the whole point.
+
+// Board x maps to world X, board z to world Y (up), board y to world -Z, which
+// is the mapping the other two views already use.
+const PLACEMENT = {
+  wmin: [0, 0, 0],
+  xmin: [-1, 0, 0],
+  xmax: [1, 0, 0],
+  ymin: [0, 0, 1],
+  ymax: [0, 0, -1],
+  zmax: [0, 1, 0],
+  zmin: [0, -1, 0],
+  wmax: [0, -2, 0],
+};
+
+export function createUnwrapView(pos, onSelect) {
+  const theme = readTheme();
+  const cells = tesseractCells(pos.shape);
+  const extent = pos.shape[0] - 1;          // 7 units across an 8-point cell
+  const step = extent * 1.04;               // a hair of daylight between cells
+
+  const root = document.createElement('section');
+  root.className = 'unwrap-panel';
+  root.innerHTML = `
+    <div class="cube-heading">
+      <div>
+        <span class="eyebrow">Unfolded</span>
+        <h2>The net, laid out in 3D.</h2>
+      </div>
+      <button class="reset-unwrap">Reset view</button>
+    </div>
+    <p class="hint">The interior cell in the middle, each face cell resting against the face of it they share, and the outer cell continuing past the bottom arm. Same colours as the views above.</p>`;
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'unwrap-canvas';
+  canvas.setAttribute('role', 'group');
+  canvas.setAttribute('aria-label', 'The tesseract unfolded into a three-dimensional net. Drag to orbit, scroll to zoom, click a cell to identify it.');
+  root.append(canvas);
+
+  const caption = document.createElement('p');
+  caption.className = 'cube-caption';
+  caption.setAttribute('aria-live', 'polite');
+  root.append(caption);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+
+  const box = new THREE.BoxGeometry(extent, extent, extent);
+  const outline = new THREE.EdgesGeometry(box);
+  const bounds = new THREE.Box3();
+
+  const solids = cells.map((cell) => {
+    const [px, py, pz] = PLACEMENT[cell.id];
+    const origin = new THREE.Vector3(px * step, py * step, pz * step);
+
+    const material = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(CELL_COLORS[cell.id]),
+      transparent: true,
+      opacity: 0.16,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(box, material);
+    mesh.position.copy(origin);
+    mesh.userData.cell = cell;
+    scene.add(mesh);
+
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: new THREE.Color(CELL_COLORS[cell.id]),
+      transparent: true,
+      opacity: 0.75,
+    });
+    const edges = new THREE.LineSegments(outline, edgeMaterial);
+    edges.position.copy(origin);
+    scene.add(edges);
+
+    bounds.expandByPoint(origin.clone().addScalar(extent / 2));
+    bounds.expandByPoint(origin.clone().addScalar(-extent / 2));
+
+    // Marks the selected board square inside whichever cells contain it.
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.55, 16, 12),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(theme.selected), depthTest: false }),
+    );
+    marker.renderOrder = 5;
+    marker.visible = false;
+    scene.add(marker);
+
+    return { cell, mesh, material, edges, edgeMaterial, marker, origin };
+  });
+
+  const center = bounds.getCenter(new THREE.Vector3());
+  const radius = bounds.getSize(new THREE.Vector3()).length() / 2;
+
+  const camera = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.1, radius * 40);
+  const home = new THREE.Vector3(radius * 1.6, radius * 1.1, radius * 2.0).add(center);
+  camera.position.copy(home);
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.enablePan = false;
+  controls.target.copy(center);
+  controls.update();
+
+  let disposed = false;
+  let needsRender = true;
+
+  function resize() {
+    const width = canvas.clientWidth || 600;
+    const height = canvas.clientHeight || 400;
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    camera.left = -radius * aspect;
+    camera.right = radius * aspect;
+    camera.top = radius;
+    camera.bottom = -radius;
+    camera.updateProjectionMatrix();
+    needsRender = true;
+  }
+  const observer = new ResizeObserver(resize);
+  observer.observe(canvas);
+  controls.addEventListener('change', () => { needsRender = true; });
+
+  let frame = 0;
+  function tick() {
+    if (disposed) return;
+    frame = requestAnimationFrame(tick);
+    if (controls.update() || needsRender) {
+      renderer.render(scene, camera);
+      needsRender = false;
+    }
+  }
+
+  // Where a board square sits inside its cell's box, in that box's local space.
+  function offsetWithin(cell, index) {
+    const local = localIndexIn(cell, pos.shape, index);
+    if (local < 0) return null;
+    const c = [
+      local % cell.size[0],
+      Math.floor(local / cell.size[0]) % cell.size[1],
+      Math.floor(local / (cell.size[0] * cell.size[1])) % cell.size[2],
+    ];
+    const span = cell.size.map((n) => (n - 1) / 2);
+    return new THREE.Vector3(c[0] - span[0], c[2] - span[2], -(c[1] - span[1]));
+  }
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  let down = null;
+  let focused = null;
+
+  canvas.addEventListener('pointerdown', (event) => { down = { x: event.clientX, y: event.clientY }; });
+  canvas.addEventListener('pointerup', (event) => {
+    if (!down) return;
+    const moved = Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5;
+    down = null;
+    if (moved) return;
+    const rect = canvas.getBoundingClientRect();
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObjects(solids.map((s) => s.mesh), false)[0];
+    focused = hit ? hit.object.userData.cell.id : null;
+    describe();
+    needsRender = true;
+  });
+
+  root.querySelector('.reset-unwrap').addEventListener('click', () => {
+    camera.position.copy(home);
+    camera.zoom = 1;
+    camera.updateProjectionMatrix();
+    controls.target.copy(center);
+    controls.update();
+    needsRender = true;
+  });
+
+  let selected = null;
+
+  function describe() {
+    if (selected !== null) {
+      const owners = solids.filter((s) => localIndexIn(s.cell, pos.shape, selected) >= 0);
+      caption.textContent = owners.length
+        ? `${squareName(pos.shape, selected)} · shown in ${owners.map((o) => o.cell.label).join(', ')}`
+        : `${squareName(pos.shape, selected)} · interior point — on none of the eight cells.`;
+      return;
+    }
+    const cell = focused && cells.find((c) => c.id === focused);
+    caption.textContent = cell
+      ? `${cell.label} · the ${cell.role} cell`
+      : 'Eight cells, unfolded. Click one to identify it.';
+  }
+
+  function paint() {
+    for (const solid of solids) {
+      const owns = selected !== null && localIndexIn(solid.cell, pos.shape, selected) >= 0;
+      const lit = owns || solid.cell.id === focused;
+      solid.material.opacity = owns ? 0.4 : lit ? 0.3 : 0.16;
+      solid.edgeMaterial.opacity = lit ? 1 : 0.75;
+      solid.marker.visible = owns;
+      if (owns) solid.marker.position.copy(solid.origin).add(offsetWithin(solid.cell, selected));
+    }
+    needsRender = true;
+  }
+
+  resize();
+  describe();
+  paint();
+  tick();
+
+  return {
+    element: root,
+    update(index) {
+      selected = index;
+      if (index !== null) focused = null;
+      paint();
+      describe();
+    },
+    destroy() {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      controls.dispose();
+      box.dispose();
+      outline.dispose();
+      for (const solid of solids) {
+        solid.material.dispose();
+        solid.edgeMaterial.dispose();
+        solid.marker.geometry.dispose();
+        solid.marker.material.dispose();
+      }
+      renderer.dispose();
+    },
+  };
+}
