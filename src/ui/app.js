@@ -4,7 +4,6 @@ import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
 import { createCubeGrid } from './cube-grid.js';
-import { createUnwrapView } from './unwrap.js';
 
 const els = {
   variant: document.querySelector('#variant'),
@@ -80,13 +79,6 @@ function refreshExplorer(pos) {
     if (pos.dims === 4) defs.push({ id: 'cells', label: 'Cells', make: () => createCubeGrid(pos, onSquare, glyphFor) });
     defs.push({ id: 'slices', label: 'Slices', make: () => buildSlices(pos) });
 
-    // Always-on overlays, pinned inside the main view rather than toggled.
-    const overlays = pos.dims === 4 ? [createUnwrapView(pos, onSquare, { compact: true })] : [];
-    for (const overlay of overlays) {
-      overlay.element.classList.add('explorer-overlay');
-      main.append(overlay.element);
-    }
-
     const toolbar = document.createElement('div');
     toolbar.className = 'explorer-toolbar';
     const open = new Set();
@@ -149,12 +141,10 @@ function refreshExplorer(pos) {
       position: pos,
       update(selected) {
         viewer.update(selected);
-        for (const overlay of overlays) overlay.update?.(selected);
         for (const { view } of built.values()) view.update?.(selected);
       },
       destroy() {
         viewer.destroy();
-        for (const overlay of overlays) overlay.destroy?.();
         for (const { view } of built.values()) view.destroy?.();
       },
     };

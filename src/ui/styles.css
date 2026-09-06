@@ -357,15 +357,6 @@ dialog::backdrop { background: #0007; }
 .cube-cell.role-outer { border-width: 2px; }
 .cube-cell-label em { font-style: normal; opacity: .65; }
 
-/* The unfolded net: translucent solids rather than points, so it needs room. */
-.unwrap-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-.unwrap-panel .hint { margin: 10px 0 0; }
-.unwrap-canvas { display: block; width: 100%; height: min(60vh, 560px); min-height: 320px; margin-top: 14px; touch-action: none; cursor: grab; }
-.unwrap-canvas:active { cursor: grabbing; }
-.unwrap-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.reset-unwrap { font-size: 12px; white-space: nowrap; }
-@media (max-width: 850px) { .unwrap-canvas { height: auto; aspect-ratio: 1; } }
-
 /* Explorer shell: the spatial view fills the window and the other views dock
    beside it on demand. Overrides the stacked layout above. */
 .inspection main { max-width: none; padding: 18px 22px 22px; }
@@ -384,7 +375,6 @@ dialog::backdrop { background: #0007; }
 /* A 380px column is too narrow for the wide grids used at full width. */
 .explorer-side .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .explorer-side .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.explorer-side .unwrap-canvas { height: 300px; min-height: 0; }
 .explorer-side .cube-view { position: static; }
 
 
@@ -400,8 +390,7 @@ dialog::backdrop { background: #0007; }
 .inspection main { padding-top: 12px; }
 
 .explorer-main > .cube-view,
-.explorer-side .cube-grid-panel,
-.explorer-side .unwrap-panel {
+.explorer-side .cube-grid-panel {
   border: 0;
   background: none;
   border-radius: 0;
@@ -442,13 +431,8 @@ dialog::backdrop { background: #0007; }
   .explorer-controls .explorer-toolbar { flex-direction: row; margin-left: auto; }
 }
 
-/* The net as an always-on minimap, pinned inside the main view. Wireframe
-   only, and click-through so it never steals a drag from the canvas. */
+/* Containing block for anything the main view pins over its canvas. */
 .explorer-main { position: relative; }
-.explorer-overlay { position: absolute; top: 10px; right: 10px; z-index: 2; width: 168px; pointer-events: none; }
-.unwrap-mini { background: none; border: 0; border-radius: 0; padding: 0; }
-.unwrap-mini .unwrap-canvas { height: 168px; min-height: 0; margin: 0; cursor: default; }
-@media (max-width: 900px) { .explorer-overlay { width: 116px; } .unwrap-mini .unwrap-canvas { height: 116px; } }
 
 /* Segmented controls: both options visible, one click to switch. */
 .control { display: flex; flex-direction: column; gap: 5px; }

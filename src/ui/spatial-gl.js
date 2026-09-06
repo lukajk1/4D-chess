@@ -51,7 +51,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
-      <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
+      ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
       ${pieceCount ? segmented('Pieces', 'Piece rendering', [['meshes', '3D'], ['glyphs', 'Glyphs']], 'meshes') : ''}
       ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
@@ -236,13 +236,18 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // back early in the unfold.
   const K_FOLDED = 2.5;
   const K_UNFOLDED = 6;
-  const cameraK = (t) => K_FOLDED + (K_UNFOLDED - K_FOLDED) * smooth(clamp01(t / 0.25));
+  const cameraK = (t) => (K_FOLDED + (K_UNFOLDED - K_FOLDED) * smooth(clamp01(t / 0.25))) / wSpread;
   const wScaleAt = (w, K) => (is4D ? K / (K - (w - center[3]) / (center[3] || 1)) : 1);
 
   // A coordinate axis belongs to three independent planes in 4D. Rotating in
   // all three planes containing z gives the point cloud a true 4D motion: XZ
   // and YZ turn its spatial silhouette while ZW changes apparent 4D depth.
   let wMode = 'nested';
+  // How far apart consecutive w slices are drawn. The two projections reach
+  // that differently -- nested moves the 4D camera in, oblique lengthens its
+  // step -- so this is a factor rather than a distance, and up means further
+  // apart in both.
+  let wSpread = 1;
 
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
   const rotationAngles = new Float64Array(3);
@@ -275,7 +280,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   function projectAt(c, K, g, sp, out) {
     const q = is4D ? rotateThroughZPlanes(c) : c;
     if (is4D && wMode === 'oblique') {
-      const dw = (q[3] - center[3]) * OBLIQUE_STEP;
+      const dw = (q[3] - center[3]) * OBLIQUE_STEP * wSpread;
       out[0] = ((q[0] - center[0]) + dw * OBLIQUE_DIR[0]) * g;
       out[1] = ((q[2] - center[2]) * sp + dw * OBLIQUE_DIR[1]) * g;
       out[2] = (-(q[1] - center[1]) + dw * OBLIQUE_DIR[2]) * g;
@@ -617,6 +622,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   }
 
   // ---- state
+  // Layer spacing lost its slider but not its wiring: projectAt and
+  // rebuildFolded still scale z by it, so putting a control back is one line.
   let spacing = 1;
   let targets = [];
   let reachMode = 'points';
@@ -1062,9 +1069,13 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     applyBackground();
   });
 
-  // Addressed by label, not by type: there are two range inputs now.
-  root.querySelector('[aria-label="Layer spacing"]').addEventListener('input', (e) => {
-    spacing = Number(e.target.value);
+  // Addressed by label, not by type: there are two range inputs now. Absent
+  // outside 4D, where there is no w to space out.
+  root.querySelector('[aria-label="W spacing"]')?.addEventListener('input', (e) => {
+    wSpread = Number(e.target.value);
+    // The open net changes size with the spread, exactly as it does with the
+    // projection, so its fit has to be taken again.
+    measureNet();
     rebuildPositions();
   });
   const unfoldButton = root.querySelector('.unfold');
@@ -1190,7 +1201,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
         ? `${count.toLocaleString()} positions · ${pieceCount} pieces${is4D
             ? ` · ${stats.boundary.toLocaleString()} lie on the eight cells, ${stats.interior.toLocaleString()} strictly inside.`
             : royalLayers ? ` · Kings and queens on layers ${royalLayers.map((z) => z + 1).join(' and ')}.` : ''}`
-        : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · ${coords[selected].map((v, axis) => `${'xyzw'[axis]} ${v + 1}`).join(', ')}`;
+        : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · (${coords[selected].map((v) => v + 1).join(',')})`;
       needsRender = true;
     },
     destroy() {

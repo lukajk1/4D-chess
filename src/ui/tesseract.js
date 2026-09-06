@@ -12,30 +12,6 @@
 
 const AXES = 'xyzw';
 
-// Where each cell sits in the unfolded net, in units of one cell width.
-// Board x maps to world X, board z to world Y (up), board y to world -Z.
-// The outer cell has no free face left on the centre cube, so it continues
-// the column past the bottom arm -- the standard hypercube net.
-export const PLACEMENT = {
-  wmin: [0, 0, 0],
-  xmin: [-1, 0, 0],
-  xmax: [1, 0, 0],
-  ymin: [0, 0, 1],
-  ymax: [0, 0, -1],
-  zmax: [0, 1, 0],
-  zmin: [0, -1, 0],
-  wmax: [0, -2, 0],
-};
-
-// A cell-local index as its three free-axis coordinates.
-export function localCoordIn(cell, local) {
-  return [
-    local % cell.size[0],
-    Math.floor(local / cell.size[0]) % cell.size[1],
-    Math.floor(local / (cell.size[0] * cell.size[1])) % cell.size[2],
-  ];
-}
-
 export function tesseractCells(shape) {
   const cells = [];
   for (let axis = 0; axis < 4; axis++) {
@@ -80,17 +56,6 @@ export function tesseractCells(shape) {
   // Read inner to outer: interior cube, the six face cells, then the outer cube.
   const order = ['wmin', 'xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax', 'wmax'];
   return order.map((id) => cells.find((cell) => cell.id === id));
-}
-
-// Which cells a lattice point belongs to; empty for strictly interior points.
-export function cellsContaining(cells, shape, index) {
-  const coord = [];
-  let rest = index;
-  for (let a = 0; a < 4; a++) {
-    coord.push(rest % shape[a]);
-    rest = Math.floor(rest / shape[a]);
-  }
-  return cells.filter((cell) => coord[cell.axis] === cell.at);
 }
 
 // Position of a point within its cell's own cube, or -1 when absent.

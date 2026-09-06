@@ -23,26 +23,29 @@ const FILES = 'abcdefghijklmnopqrstuvwxyz';
 //   1D  e          file
 //   2D  e4         file, rank
 //   3D  γe4        layer (Greek), file, rank
-//   4D  Dγe4       cell (capital), layer, file, rank
+//   4D  Dγe4       w-depth (capital), layer, file, rank
 //
-// Capitals count w, so A is the interior cube and the last letter the outer one
-// -- the first and last cells of the tesseract. Layers are the z slices, so α
-// is the first board in the stack.
+// Capitals count w and Greek letters count z. Both are plain coordinates, so
+// there are n of each. The viewer's eight "cells" are a different thing -- the
+// tesseract's boundary cubes, always eight of them however wide the board --
+// and nothing here indexes those, so the words are kept apart on purpose.
+// "Cube" would not have separated them either: every w slice is a cube, so is
+// every z stack, and so is every one of the eight cells.
 export const GREEK = 'αβγδεζηθικλμνξοπρστυφχψω';
-// Uppercase against the lowercase files, so a cell letter and a file letter can
-// never be confused however wide the board gets. One character per cell keeps
+// Uppercase against the lowercase files, so a w letter and a file letter can
+// never be confused however wide the board gets. One character per step keeps
 // every square name the same length, which Roman numerals did not.
-export const CELLS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+export const W_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 export const layerName = (z) => GREEK[z];
-export const cellName = (w) => CELLS[w];
+export const wName = (w) => W_LETTERS[w];
 
 export function squareName(shape, index) {
   const coord = toCoord(shape, index);
   if (shape.length === 1) return FILES[coord[0]];
   let name = FILES[coord[0]] + (coord[1] + 1);
   if (shape.length >= 3) name = GREEK[coord[2]] + name;
-  if (shape.length >= 4) name = CELLS[coord[3]] + name;
+  if (shape.length >= 4) name = W_LETTERS[coord[3]] + name;
   // Beyond four axes there is no obvious alphabet left; fall back to suffixes.
   for (let axis = 4; axis < shape.length; axis++) name += ':' + (coord[axis] + 1);
   return name;
@@ -52,7 +55,7 @@ export function parseSquare(shape, name) {
   const [head, ...rest] = name.split(':');
   const coord = new Array(shape.length).fill(0);
   let i = 0;
-  if (shape.length >= 4) coord[3] = CELLS.indexOf(head[i++]);
+  if (shape.length >= 4) coord[3] = W_LETTERS.indexOf(head[i++]);
   if (shape.length >= 3) coord[2] = GREEK.indexOf(head[i++]);
   coord[0] = FILES.indexOf(head[i++]);
   if (shape.length > 1) coord[1] = parseInt(head.slice(i), 10) - 1;
