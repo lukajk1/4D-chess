@@ -500,10 +500,11 @@ dialog::backdrop { background: #0007; }
   .segmented button { flex: none; }
 }
 
-/* Fold slider: scrubbable 0-1 position, with the value beside its label. */
-.fold-value { font: 11px ui-monospace, monospace; color: var(--ink); }
+/* Fold and 4D rotation sliders use normalized values; angle outputs translate
+   rotation turns into degrees without making the range itself harder to scrub. */
+.fold-value, .rotation-value { font: 11px ui-monospace, monospace; color: var(--ink); }
 .control-label { display: flex; align-items: baseline; gap: 6px; }
-.fold-slider { width: 100%; padding: 0; accent-color: var(--accent); }
+.fold-slider, .rotation-slider { width: 100%; padding: 0; accent-color: var(--accent); }
 
 /* The column rule stacks label above control, which is wrong for a checkbox
    and its text. Needs the element qualifier to outrank `> label`, and an

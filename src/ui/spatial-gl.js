@@ -72,6 +72,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
       </div>
       <button class="unfold">Unfold</button>
+      ${['XZ', 'YZ', 'ZW'].map((plane, i) => `<div class="control">
+        <span class="control-label">${plane} rotation <output class="rotation-value" data-plane="${i}">0°</output></span>
+        <input class="rotation-slider" data-plane="${i}" aria-label="${plane} rotation" type="range" min="0" max="1" step="0.001" value="0">
+      </div>`).join('')}
       <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Start 4D rotation</button>` : ''}
     </div>`;
 
@@ -263,6 +267,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let wSpread = 1;
 
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
+  const TAU = Math.PI * 2;
   const rotationAngles = new Float64Array(3);
   const rotationSpeeds = [.11, -.083, .14];
   const rotated4 = [0, 0, 0, 0];
@@ -443,6 +448,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const tileMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uOpacity: { value: 0.28 },
+      uOpaque: { value: 0 },
       uEnvironment: { value: null },
       uEnvironmentStrength: { value: 0 },
     },
@@ -456,6 +462,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       varying float vShade;
       varying vec3 vWorldNormal;
       varying vec3 vWorldPosition;
+      varying vec3 vTilePosition;
       void main() {
         vColor = aColor;
         vAlpha = aAlpha;
@@ -464,10 +471,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         vec4 worldPosition = modelMatrix * vec4(at, 1.0);
         vWorldPosition = worldPosition.xyz;
         vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vTilePosition = position;
         gl_Position = projectionMatrix * viewMatrix * worldPosition;
       }`,
     fragmentShader: `
       uniform float uOpacity;
+      uniform float uOpaque;
       uniform samplerCube uEnvironment;
       uniform float uEnvironmentStrength;
       varying vec3 vColor;
@@ -475,13 +484,20 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       varying float vShade;
       varying vec3 vWorldNormal;
       varying vec3 vWorldPosition;
+      varying vec3 vTilePosition;
       void main() {
         if (vAlpha <= 0.001) discard;
+        if (uOpaque > 0.5 && vAlpha < 0.999) {
+          vec3 cell = floor((vTilePosition + 0.5) * 28.0);
+          float coverage = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          if (coverage > vAlpha) discard;
+        }
         vec3 base = vColor * vShade;
         vec3 eye = normalize(vWorldPosition - cameraPosition);
         vec3 reflected = reflect(eye, normalize(vWorldNormal));
         vec3 environment = textureCube(uEnvironment, reflected).rgb;
-        gl_FragColor = vec4(mix(base, environment, uEnvironmentStrength), vAlpha * uOpacity);
+        float alpha = uOpaque > 0.5 ? 1.0 : vAlpha * uOpacity;
+        gl_FragColor = vec4(mix(base, environment, uEnvironmentStrength), alpha);
       }`,
     transparent: true,
     depthWrite: false,
@@ -1174,10 +1190,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     pointGeometry.attributes.aAlpha.needsUpdate = true;
     tileGeometry.attributes.aAlpha.needsUpdate = true;
     const squareMode = latticeMode !== 'verts';
+    const opaqueSquares = latticeMode === 'opaque';
     tileMesh.visible = squareMode;
-    tileMaterial.uniforms.uOpacity.value = latticeMode === 'opaque' ? 1 : 0.28;
-    tileMaterial.uniforms.uEnvironmentStrength.value = latticeMode === 'opaque' && tileMaterial.uniforms.uEnvironment.value ? .22 : 0;
-    tileMaterial.depthWrite = latticeMode === 'opaque';
+    tileMaterial.transparent = !opaqueSquares;
+    tileMaterial.uniforms.uOpacity.value = opaqueSquares ? 1 : 0.28;
+    tileMaterial.uniforms.uOpaque.value = opaqueSquares ? 1 : 0;
+    tileMaterial.uniforms.uEnvironmentStrength.value = opaqueSquares && tileMaterial.uniforms.uEnvironment.value ? .22 : 0;
+    tileMaterial.depthWrite = opaqueSquares;
 
     edgePairs.forEach((edge, i) => {
       // The tesseract frame stays whole; only the 3D board grids answer to
@@ -1419,8 +1438,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     applyBackground();
   });
 
-  // Addressed by label, not by type: there are two range inputs now. Absent
-  // outside 4D, where there is no w to space out.
+  // Addressed by label rather than type because the control strip contains
+  // several independent ranges. Absent outside 4D, where there is no w.
   root.querySelector('[aria-label="W spacing"]')?.addEventListener('input', (e) => {
     wSpread = Number(e.target.value);
     // The open net changes size with the spread, exactly as it does with the
@@ -1432,6 +1451,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const foldSlider = root.querySelector('.fold-slider');
   const foldValue = root.querySelector('.fold-value');
   const rotationButton = root.querySelector('.rotation-toggle');
+  const rotationSliders = Array.from(root.querySelectorAll('.rotation-slider'));
+  const rotationValues = Array.from(root.querySelectorAll('.rotation-value'));
 
   function syncFoldUI() {
     if (foldSlider) foldSlider.value = String(unfoldT);
@@ -1445,6 +1466,29 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
   }
 
+  function syncRotationButton() {
+    if (!rotationButton) return;
+    rotationButton.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
+    rotationButton.setAttribute('aria-pressed', String(rotationRunning));
+  }
+
+  function syncRotationUI() {
+    rotationSliders.forEach((slider, i) => {
+      const rawTurn = rotationAngles[i] / TAU;
+      const turn = rawTurn >= 0 && rawTurn <= 1
+        ? rawTurn
+        : ((rotationAngles[i] % TAU) + TAU) % TAU / TAU;
+      slider.value = String(turn);
+      if (rotationValues[i]) rotationValues[i].textContent = `${Math.round(turn * 360)}°`;
+    });
+  }
+
+  function stopRotation() {
+    if (!rotationRunning) return;
+    rotationRunning = false;
+    syncRotationButton();
+  }
+
   unfoldButton?.addEventListener('click', () => {
     unfoldTarget = unfoldT >= 0.5 ? 0 : 1;
     syncFoldUI();
@@ -1452,9 +1496,19 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   rotationButton?.addEventListener('click', () => {
     rotationRunning = !rotationRunning;
-    rotationButton.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
-    rotationButton.setAttribute('aria-pressed', String(rotationRunning));
+    syncRotationButton();
     needsRender = true;
+  });
+
+  rotationSliders.forEach((slider, i) => {
+    slider.addEventListener('pointerdown', stopRotation);
+    slider.addEventListener('input', () => {
+      stopRotation();
+      rotationAngles[i] = Number(slider.value) * TAU;
+      writeSlotPositions();
+      applyFilters();
+      syncRotationUI();
+    });
   });
 
   foldSlider?.addEventListener('input', () => {
@@ -1535,8 +1589,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
     if (rotationRunning) {
       for (let i = 0; i < rotationAngles.length; i++) {
-        rotationAngles[i] = (rotationAngles[i] + rotationSpeeds[i] * elapsed) % (Math.PI * 2);
+        rotationAngles[i] = (rotationAngles[i] + rotationSpeeds[i] * elapsed + TAU) % TAU;
       }
+      syncRotationUI();
       positionsChanged = true;
     }
     if (positionsChanged) {
@@ -1563,6 +1618,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   setCamera('perspective');
   reportZoom();
   syncFoldUI();
+  syncRotationUI();
   // The caller restores the previous camera and fold state immediately after
   // creation. Starting on the next frame avoids briefly rendering defaults.
   frame = requestAnimationFrame(tick);
@@ -1662,14 +1718,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       }
       if (state.rotationRunning !== undefined && state.rotationRunning !== rotationRunning) {
         rotationRunning = state.rotationRunning;
-        const rotBtn = root.querySelector('.rotation-toggle');
-        if (rotBtn) {
-          rotBtn.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
-          rotBtn.setAttribute('aria-pressed', String(rotationRunning));
-        }
+        syncRotationButton();
       }
       if (state.rotationAngles && rotationAngles) {
-        for (let i = 0; i < rotationAngles.length; i++) rotationAngles[i] = state.rotationAngles[i];
+        for (let i = 0; i < rotationAngles.length; i++) {
+          rotationAngles[i] = ((state.rotationAngles[i] % TAU) + TAU) % TAU;
+        }
+        syncRotationUI();
       }
       if (state.layer !== undefined && state.layer !== layer) {
         layer = state.layer;
