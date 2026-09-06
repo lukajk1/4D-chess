@@ -62,14 +62,18 @@
 .cube-piece.black { fill: #26362c; stroke: #e0e5d4; }
 .cube-node:hover .cube-dot { stroke: var(--selected); stroke-width: 3; }
 .hyper-point:hover { stroke: var(--selected); stroke-width: 2; }
-.w-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font: 11px ui-monospace, monospace; }
-.w-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.w-legend i { width: 7px; height: 7px; border-radius: 50%; }
 .slice-cube-picker { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
 .explorer-slices { min-width: 0; width: 100%; }
 .cube-axes line { stroke: var(--muted); stroke-width: 1.5; }
 .cube-axes text { fill: var(--muted); font-size: 13px; }
-.cube-caption { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font: 12px/1.6 ui-monospace, monospace; min-height: 46px; }
+.cube-caption {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 2; pointer-events: none;
+  margin: 0; max-width: calc(100% - 32px); text-align: center;
+  font: 12px/1.5 ui-monospace, monospace;
+  /* Reads over the lattice without a panel behind it. */
+  text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
+}
 @media (max-width: 850px) {
   .cube-explorer { display: flex; flex-direction: column-reverse; gap: 24px; }
   .cube-view { position: static; width: 100%; }

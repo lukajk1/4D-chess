@@ -5,7 +5,7 @@ import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { createModelPieces } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
-import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
+import { isInterior, tesseractCells, hingeTree, unfoldCoord } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, brighten, POINT_VERTEX, POINT_FRAGMENT,
   LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, HALO_FRAGMENT, buildGlyphAtlas,
@@ -24,8 +24,6 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const coords = pos.squares.map((_, i) => pos.coord(i));
   const center = pos.shape.map((n) => (n - 1) / 2);
   const cells = is4D ? tesseractCells(pos.shape) : [];
-  const stats = latticeStats(pos.shape);
-  const royalLayers = pos.variant?.royalLayers ?? null;
   const pieceIndices = pos.squares.map((p, i) => (p ? i : -1)).filter((i) => i >= 0);
   const pieceCount = pieceIndices.length;
 
@@ -71,30 +69,19 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, click a piece or an empty point to inspect.`);
   root.append(canvas);
 
-  if (is4D) {
-    const legend = document.createElement('div');
-    legend.className = 'w-legend';
-    legend.innerHTML = cells.map((cell) => `<span><i style="background:${CELL_COLORS[cell.id]}"></i>${cell.label}${cell.role === 'face' ? '' : ` ${cell.role}`}</span>`).join('');
-    // The legend names cells, so it belongs to the by-cell colouring only.
-    legend.hidden = true;
-    root.append(legend);
-    const explanation = document.createElement('p');
-    explanation.className = 'hint w-explain';
-    root.append(explanation);
-  }
-
+  // Floats over the canvas rather than sitting under it, centred along the
+  // bottom edge, so nothing crops the view.
   const caption = document.createElement('p');
   caption.className = 'cube-caption';
   caption.setAttribute('aria-live', 'polite');
-  const help = document.createElement('p');
-  help.className = 'hint';
-  help.textContent = 'Drag to orbit · Right-drag to pan · Scroll to zoom · Click a point to inspect.';
+
+  // The piece models are CC BY 3.0, which requires attribution, so this outlives
+  // the footer it used to sit in and docks with the controls instead.
   const creditLink = document.createElement('button');
   creditLink.type = 'button';
   creditLink.className = 'credit-link';
   creditLink.textContent = 'Asset credits';
   creditLink.setAttribute('aria-haspopup', 'dialog');
-  help.append(' · ', creditLink);
 
   const creditDialog = document.createElement('dialog');
   creditDialog.className = 'asset-credit';
@@ -110,7 +97,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       into the public domain, via OpenGameArt. Credit is not required; this is here anyway.</p>
     <form method="dialog"><button>Close</button></form>`;
   creditLink.addEventListener('click', () => creditDialog.showModal());
-  root.append(caption, help, creditDialog);
+  root.append(caption, creditDialog);
 
   // ---- three.js scene
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -502,7 +489,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
 
   const modelStatus = document.createElement('output');
   modelStatus.setAttribute('aria-live', 'polite');
-  root.querySelector('.cube-controls').append(modelStatus);
+  root.querySelector('.cube-controls').append(modelStatus, creditLink);
   const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
     modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
     applyFilters();
@@ -1000,19 +987,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   onSegment('Hyperprojection', (value) => {
     wMode = value;
     measureNet();
-    syncExplanation();
     rebuildPositions();
   });
-
-  function syncExplanation() {
-    const note = root.querySelector('.w-explain');
-    if (!note) return;
-    const sectors = 'Colour carries the angular sector, so a wedge shares its colour with the face of the inner cube it grows from — that is where each of the six remaining cells lives.';
-    note.textContent = wMode === 'oblique'
-      ? `Direction carries w: every w layer is the same cube, stepped along one fixed diagonal, so the w = 1 and w = ${pos.shape[3]} cells sit corner to corner joined by slanted edges. A parallel projection has no foreshortening, so all eight cells keep their true size. Points on no cell stay faint.`
-      : `Radius carries w: the w = 1 cell is the inner cube, w = ${pos.shape[3]} the outer. ${sectors} Points on no cell stay faint.`;
-  }
-  syncExplanation();
   onSegment('Move highlight', (value) => {
     reachMode = value;
     writeHighlights();
@@ -1031,9 +1007,6 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   onSegment('Point colouring', (value) => {
     colourMode = value;
     applyColors();
-    // The legend names cells, so it only applies to the cell colouring.
-    const legend = root.querySelector('.w-legend');
-    if (legend) legend.hidden = colourMode === 'board';
     needsRender = true;
   });
   // Background is the scene clear, not a canvas style. Leaving it null keeps
@@ -1197,10 +1170,10 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       targets = selected === null ? [] : envelope(pos, selected);
       writeSlotPositions();
       const piece = selected === null ? null : pos.get(selected);
-      caption.textContent = selected === null
-        ? `${count.toLocaleString()} positions · ${pieceCount} pieces${is4D
-            ? ` · ${stats.boundary.toLocaleString()} lie on the eight cells, ${stats.interior.toLocaleString()} strictly inside.`
-            : royalLayers ? ` · Kings and queens on layers ${royalLayers.map((z) => z + 1).join(' and ')}.` : ''}`
+      // Blank until something is picked: an idle caption is just chrome over
+      // the view, and the board summary it used to hold said nothing that
+      // changes.
+      caption.textContent = selected === null ? ''
         : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · (${coords[selected].map((v) => v + 1).join(',')})`;
       needsRender = true;
     },
