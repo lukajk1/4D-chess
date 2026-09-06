@@ -32,20 +32,22 @@ const FILES = 'abcdefghijklmnopqrstuvwxyz';
 // "Cube" would not have separated them either: every w slice is a cube, so is
 // every z stack, and so is every one of the eight cells.
 export const GREEK = 'αβγδεζηθικλμνξοπρστυφχψω';
-// Uppercase against the lowercase files, so a w letter and a file letter can
-// never be confused however wide the board gets. One character per step keeps
-// every square name the same length, which Roman numerals did not.
 export const W_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+export const W_ROMAN = [
+  'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii',
+  'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi',
+  'xvii', 'xviii', 'xix', 'xx', 'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxvi',
+];
 
 export const layerName = (z) => GREEK[z];
-export const wName = (w) => W_LETTERS[w];
+export const wName = (w) => W_ROMAN[w] ?? String(w + 1);
 
 export function squareName(shape, index) {
   const coord = toCoord(shape, index);
   if (shape.length === 1) return FILES[coord[0]];
   let name = FILES[coord[0]] + (coord[1] + 1);
   if (shape.length >= 3) name = GREEK[coord[2]] + name;
-  if (shape.length >= 4) name = W_LETTERS[coord[3]] + name;
+  if (shape.length >= 4) name = wName(coord[3]) + name;
   // Beyond four axes there is no obvious alphabet left; fall back to suffixes.
   for (let axis = 4; axis < shape.length; axis++) name += ':' + (coord[axis] + 1);
   return name;
@@ -54,11 +56,33 @@ export function squareName(shape, index) {
 export function parseSquare(shape, name) {
   const [head, ...rest] = name.split(':');
   const coord = new Array(shape.length).fill(0);
-  let i = 0;
-  if (shape.length >= 4) coord[3] = W_LETTERS.indexOf(head[i++]);
-  if (shape.length >= 3) coord[2] = GREEK.indexOf(head[i++]);
-  coord[0] = FILES.indexOf(head[i++]);
-  if (shape.length > 1) coord[1] = parseInt(head.slice(i), 10) - 1;
+  if (shape.length >= 4) {
+    let greekPos = -1;
+    for (let j = 0; j < head.length; j++) {
+      if (GREEK.includes(head[j])) {
+        greekPos = j;
+        break;
+      }
+    }
+    if (greekPos > 0) {
+      const wPart = head.slice(0, greekPos).toLowerCase();
+      let wIdx = W_ROMAN.indexOf(wPart);
+      if (wIdx === -1) wIdx = W_LETTERS.indexOf(head.slice(0, greekPos));
+      coord[3] = wIdx >= 0 ? wIdx : parseInt(wPart, 10) - 1;
+      coord[2] = GREEK.indexOf(head[greekPos]);
+      coord[0] = FILES.indexOf(head[greekPos + 1]);
+      coord[1] = parseInt(head.slice(greekPos + 2), 10) - 1;
+    }
+  } else if (shape.length === 3) {
+    coord[2] = GREEK.indexOf(head[0]);
+    coord[0] = FILES.indexOf(head[1]);
+    coord[1] = parseInt(head.slice(2), 10) - 1;
+  } else if (shape.length === 2) {
+    coord[0] = FILES.indexOf(head[0]);
+    coord[1] = parseInt(head.slice(1), 10) - 1;
+  } else if (shape.length === 1) {
+    coord[0] = FILES.indexOf(head[0]);
+  }
   rest.forEach((part, k) => { coord[4 + k] = parseInt(part, 10) - 1; });
   return toIndex(shape, coord);
 }

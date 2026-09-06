@@ -30,16 +30,23 @@ function leap(pos, from, vectors, out, color) {
 }
 
 // A pawn advances one square along the forward axis, and captures one square
-// forward while also shifting by one on exactly one other axis. In 2D that is
-// the familiar pair of diagonals; in 4D it gives six capture squares.
+// forward diagonally across files (axis 0), optionally shifting to a higher, lower
+// or same layer (axis 2: z) in 3D/4D.
 function pawnCaptureVectors(dims, axis, direction) {
+  if (dims < 2) return [];
+  if (dims === 2) {
+    const v1 = new Array(2).fill(0); v1[axis] = direction; v1[1 - axis] = -1;
+    const v2 = new Array(2).fill(0); v2[axis] = direction; v2[1 - axis] = 1;
+    return [v1, v2];
+  }
   const vectors = [];
-  for (let other = 0; other < dims; other++) {
-    if (other === axis) continue;
-    for (const sign of [-1, 1]) {
+  const zDeltas = dims >= 3 && axis !== 2 ? [-1, 0, 1] : [0];
+  for (const dx of [-1, 1]) {
+    for (const dz of zDeltas) {
       const v = new Array(dims).fill(0);
       v[axis] = direction;
-      v[other] = sign;
+      v[0] = dx;
+      if (dims >= 3 && axis !== 2) v[2] = dz;
       vectors.push(v);
     }
   }
@@ -94,38 +101,75 @@ function castlingMoves(pos, color, out) {
   }
 }
 
-// Every square a piece could reach on an otherwise empty board: rays run to
-// the edge instead of stopping at the first occupant, and nothing is checked
-// for legality. This is the shape of a piece's reach rather than a list of its
-// moves, which is what the spatial viewer highlights while 3D and 4D remain
-// inspection-only. Dimension-generic like the rest: a rook gets its 2d axis
-// rays, a queen its 3^d - 1, with no per-dimension code.
-export function envelope(pos, from) {
+// Computes reachable squares for a piece, validating collisions and obstacles:
+// Friendly pieces block that square and terminate the ray; enemy pieces can be captured
+// and terminate the ray. If `ignoreOccupancy` is true, rays run unconstrained to the edge.
+export function envelope(pos, from, { ignoreOccupancy = false } = {}) {
   const piece = pos.get(from);
   if (piece === null) return [];
   const type = typeOf(piece);
+  const color = colorOf(piece);
   const coord = toCoord(pos.shape, from);
   const reached = new Set();
   if (type === 'p') {
-    // A pawn is the one piece whose reach is not a vector list: its push and
-    // its captures go different ways, and both belong in the envelope.
     const axis = forwardAxisOf(pos);
-    const direction = colorOf(piece) === WHITE ? 1 : -1;
+    const direction = color === WHITE ? 1 : -1;
     const forward = new Array(pos.dims).fill(0);
     forward[axis] = direction;
-    for (const vector of [forward, ...pawnCaptureVectors(pos.dims, axis, direction)]) {
+
+    if (ignoreOccupancy) {
+      for (const vector of [forward, ...pawnCaptureVectors(pos.dims, axis, direction)]) {
+        const to = step(pos.shape, coord, vector);
+        if (to !== -1) reached.add(to);
+      }
+      return [...reached];
+    }
+
+    // Push forward: blocked by any piece in front
+    const one = step(pos.shape, coord, forward);
+    if (one !== -1 && pos.get(one) === null) {
+      reached.add(one);
+      const startRank = pos.variant?.pawnRank?.[color]
+        ?? (color === WHITE ? 1 : pos.shape[axis] - 2);
+      if (coord[axis] === startRank) {
+        const two = step(pos.shape, coord, forward, 2);
+        if (two !== -1 && pos.get(two) === null) reached.add(two);
+      }
+    }
+
+    // Diagonal captures: only onto enemy pieces (or en passant)
+    for (const vector of pawnCaptureVectors(pos.dims, axis, direction)) {
       const to = step(pos.shape, coord, vector);
-      if (to !== -1) reached.add(to);
+      if (to === -1) continue;
+      const target = pos.get(to);
+      if (target !== null && colorOf(target) !== color) reached.add(to);
+      else if (target === null && to === pos.ep) reached.add(to);
     }
     return [...reached];
   }
+
   const sliding = modeOf(type) === 'slide';
   for (const vector of vectorsFor(type, pos.dims)) {
     for (let distance = 1; ; distance++) {
       const to = step(pos.shape, coord, vector, distance);
       if (to === -1) break;
-      reached.add(to);
-      if (!sliding) break;
+      if (ignoreOccupancy) {
+        reached.add(to);
+        if (!sliding) break;
+        continue;
+      }
+      const target = pos.get(to);
+      if (target === null) {
+        reached.add(to);
+        if (!sliding) break;
+        continue;
+      }
+      if (colorOf(target) !== color) {
+        // Enemy piece can be captured, but blocks sliding past
+        reached.add(to);
+      }
+      // Friendly piece blocks destination and ray; enemy piece terminates ray
+      break;
     }
   }
   return [...reached];

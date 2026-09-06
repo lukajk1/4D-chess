@@ -4,7 +4,7 @@ import { Position } from './core/position.js';
 // Back ranks by board width. Kings and queens sit only on the middle layers,
 // so each side fields one of each per cube rather than one per layer.
 const BACK_RANKS = {
-  4: { royal: 'RQKR', plain: 'R..R' },
+  4: { royal: 'BQKB', plain: 'R..R' },
   6: { royal: 'RNQKNR', plain: 'RN..NR' },
   8: { royal: 'RNBQKBNR', plain: 'RNB..BNR' },
 };

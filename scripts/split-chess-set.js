@@ -24,10 +24,10 @@ for (const [name, meshIndex] of Object.entries(selections)) {
       licenseUrl: 'https://creativecommons.org/licenses/by/3.0/',
     } },
     scene: 0, scenes: [{ nodes: [0] }], nodes: [{ name, mesh: 0 }],
-    meshes: [mesh], accessors: [], bufferViews: [], materials: [], buffers: [],
+    meshes: [mesh], accessors: [], bufferViews: [], buffers: [],
   };
   mesh.name = name;
-  const accessorMap = new Map(), materialMap = new Map();
+  const accessorMap = new Map();
   const chunks = [];
   let byteLength = 0;
   function copyAccessor(index) {
@@ -57,12 +57,7 @@ for (const [name, meshIndex] of Object.entries(selections)) {
   for (const primitive of mesh.primitives) {
     primitive.indices = copyAccessor(primitive.indices);
     for (const key of Object.keys(primitive.attributes)) primitive.attributes[key] = copyAccessor(primitive.attributes[key]);
-    const material = primitive.material;
-    if (!materialMap.has(material)) {
-      materialMap.set(material, doc.materials.length);
-      doc.materials.push(structuredClone(original.materials[material]));
-    }
-    primitive.material = materialMap.get(material);
+    delete primitive.material;
   }
   const binary = Buffer.concat(chunks);
   // Bake centring into vertex positions, leaving identity node transforms.
@@ -96,5 +91,5 @@ for (const [name, meshIndex] of Object.entries(selections)) {
   fs.writeFileSync(path.join(outDir, `${name}.glb`), result);
   report.push({ name, triangles: mesh.primitives.reduce((sum, p) => sum + doc.accessors[p.indices].count / 3, 0), bytes: result.length });
 }
-fs.writeFileSync(path.join(outDir, 'README.md'), `# Chess meshes\n\n[Chess Set](https://poly.pizza/m/bfb3C6hpdi0) by Pia Leung, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), via Poly Pizza.\n\nExtracted from "${source}", supplied in the repository. The original source file is unchanged.\n\nSix representative white pieces, with original materials, normals, and relative scale.\nPiece bases are centred at (0, 0, 0), Y up.\nNo simplification or remeshing was performed.\n\nRegenerate from the repository root with: node scripts/split-chess-set.js\n\n| File | Triangles | Bytes |\n|---|---:|---:|\n${report.map(r => `| ${r.name}.glb | ${r.triangles} | ${r.bytes} |`).join('\n')}\n`);
+fs.writeFileSync(path.join(outDir, 'README.md'), `# Chess meshes\n\n[Chess Set](https://poly.pizza/m/bfb3C6hpdi0) by Pia Leung, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), via Poly Pizza.\n\nExtracted from "${source}", supplied in the repository. The original source file is unchanged.\n\nSix representative white pieces, with original normals and relative scale (materials omitted).\nPiece bases are centred at (0, 0, 0), Y up.\nNo simplification or remeshing was performed.\n\nRegenerate from the repository root with: node scripts/split-chess-set.js\n\n| File | Triangles | Bytes |\n|---|---:|---:|\n${report.map(r => `| ${r.name}.glb | ${r.triangles} | ${r.bytes} |`).join('\n')}\n`);
 console.table(report);

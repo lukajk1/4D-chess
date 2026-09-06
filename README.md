@@ -92,19 +92,19 @@ they never need separators:
 | 1D | `e` | file |
 | 2D | `e4` | file, rank |
 | 3D | `γe4` | layer γ (the third board), e4 |
-| 4D | `Dγe4` | w-depth D, layer γ, e4 |
+| 4D | `ivγe4` | w-depth iv, layer γ, e4 |
 
-Capitals count w and Greek letters count z, so `A` is the first w-depth and `α`
+Roman numerals count w and Greek letters count z, so `i` is the first w-depth and `α`
 the first board in the z stack. Both are plain coordinates: there are n of each.
 The viewer's eight **cells** are something else — the tesseract's boundary
 cubes, always eight of them however wide the board — and the notation never
 indexes those. (Calling the w prefix a "cube" would not have helped: every w
 slice is a cube, so is every z stack, and so is every one of the eight cells.)
 
-Each level of the hierarchy uses a distinct character class — capitals, Greek,
-lowercase, digits — which is what lets `Dγe4` parse without punctuation.
-Capitals stay clear of the lowercase files however wide the board gets, and one
-character per step keeps every square name the same length.
+Each level of the hierarchy uses a distinct character class — Roman numerals, Greek,
+lowercase, digits — which is what lets `ivγe4` parse without punctuation.
+Roman numerals are separated from the file letters by the intervening Greek layer,
+and each layer remains distinct.
 
 In 4D the armies sit in the two w-extreme cells: white's half of the 3D setup in
 the interior cube (w = 1), black's in the outer cube (w = n), facing each other
