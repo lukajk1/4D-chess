@@ -45,11 +45,15 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     <div class="cube-controls">
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['orthographic', 'Ortho'], ['perspective', 'Perspective']], 'orthographic')}
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
-      ${is4D ? segmented('Colour', 'Point colouring', [['cell', 'By cell'], ['board', 'Chessboard']], 'cell') : ''}
+      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
       <label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
-      ${is4D ? '<button class="unfold">Unfold</button>' : ''}
+      ${is4D ? `<div class="control">
+        <span class="control-label">Fold <output class="fold-value">0.00</output></span>
+        <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
+      </div>
+      <button class="unfold">Unfold</button>` : ''}
       <output class="zoom-level" aria-label="Zoom level">100%</output>
     </div>`;
 
@@ -64,6 +68,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     const legend = document.createElement('div');
     legend.className = 'w-legend';
     legend.innerHTML = cells.map((cell) => `<span><i style="background:${CELL_COLORS[cell.id]}"></i>${cell.label}${cell.role === 'face' ? '' : ` ${cell.role}`}</span>`).join('');
+    // The legend names cells, so it belongs to the by-cell colouring only.
+    legend.hidden = true;
     root.append(legend);
     const explanation = document.createElement('p');
     explanation.className = 'hint';
@@ -432,7 +438,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   let spacing = 1;
   let unfoldT = 0;
   let unfoldTarget = 0;
-  let colourMode = 'cell';
+  let colourMode = 'board';
   let layer = null;
   let cellFilter = null;
   let selected = null;
@@ -716,15 +722,40 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     if (legend) legend.hidden = colourMode === 'board';
     needsRender = true;
   });
-  root.querySelector('input[type=range]').addEventListener('input', (e) => {
+  // Addressed by label, not by type: there are two range inputs now.
+  root.querySelector('[aria-label="Layer spacing"]').addEventListener('input', (e) => {
     spacing = Number(e.target.value);
     rebuildPositions();
   });
   const unfoldButton = root.querySelector('.unfold');
+  const foldSlider = root.querySelector('.fold-slider');
+  const foldValue = root.querySelector('.fold-value');
+
+  function syncFoldUI() {
+    if (foldSlider) foldSlider.value = String(unfoldT);
+    if (foldValue) foldValue.textContent = unfoldT.toFixed(2);
+    if (unfoldButton) {
+      // The button names what it will do next, so it follows the target
+      // rather than the current position while an animation is running.
+      const opening = unfoldTarget >= 0.5;
+      unfoldButton.textContent = opening ? 'Fold' : 'Unfold';
+      unfoldButton.setAttribute('aria-pressed', String(opening));
+    }
+  }
+
   unfoldButton?.addEventListener('click', () => {
-    unfoldTarget = unfoldTarget > 0 ? 0 : 1;
-    unfoldButton.textContent = unfoldTarget > 0 ? 'Fold' : 'Unfold';
-    unfoldButton.setAttribute('aria-pressed', String(unfoldTarget > 0));
+    unfoldTarget = unfoldT >= 0.5 ? 0 : 1;
+    syncFoldUI();
+  });
+
+  foldSlider?.addEventListener('input', () => {
+    // Grabbing the slider takes over: matching the target to the current
+    // value ends any run in progress, leaving the cells wherever they are,
+    // and scrubbing then drives the fold directly in either direction.
+    unfoldT = unfoldTarget = Number(foldSlider.value);
+    writeSlotPositions();
+    applyFilters();
+    syncFoldUI();
   });
   root.querySelector('.piece-toggle input')?.addEventListener('change', (e) => {
     showPieces = e.target.checked;
@@ -744,6 +775,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
         : Math.max(unfoldTarget, unfoldT - stepSize);
       writeSlotPositions();
       applyFilters();
+      syncFoldUI();
     }
     if (controls.update() || needsRender) {
       renderer.render(scene, camera);
@@ -756,6 +788,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   resize();
   setCamera('orthographic');
   reportZoom();
+  syncFoldUI();
   tick();
 
   return {

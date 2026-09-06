@@ -464,3 +464,8 @@ dialog::backdrop { background: #0007; }
   .explorer-controls .control { flex-direction: row; align-items: center; gap: 8px; }
   .segmented button { flex: none; }
 }
+
+/* Fold slider: scrubbable 0-1 position, with the value beside its label. */
+.fold-value { font: 11px ui-monospace, monospace; color: var(--ink); }
+.control-label { display: flex; align-items: baseline; gap: 6px; }
+.fold-slider { width: 100%; padding: 0; accent-color: var(--accent); }
