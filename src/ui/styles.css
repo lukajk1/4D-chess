@@ -14,7 +14,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16191d;
+    /* Lifted 15% from #16191d: the Page background option is this colour
+       showing through the transparent canvas, and it read too heavy. */
+    --bg: #191d21;
     --panel: #1d2126;
     --ink: #e6e8ea;
     --muted: #97a0ab;

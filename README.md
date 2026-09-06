@@ -174,3 +174,8 @@ Models preserve their relative sizes and sit with their bases on lattice points.
 Unfolding ghost copies use translucent instances of the same models; auxiliary
 views retain glyphs. If a model cannot load, its pieces retain their glyphs. The set was extracted from the supplied Pia Leung
 GLB; see `assets/chess/README.md` for provenance and triangle counts.
+
+A **Background** dropdown picks between the page colour, a soft off-white, and
+a cloudy skybox. The skybox ships as the single 4x3 cross PNG it was downloaded
+as and is cut into six cube faces at load time by `src/ui/skybox.js`, fetched
+only when it is chosen. See `assets/skybox/README.md` for provenance.

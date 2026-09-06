@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { createModelPieces } from './model-pieces.js';
+import { loadSkybox } from './skybox.js';
 import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, brighten, POINT_VERTEX, POINT_FRAGMENT,
@@ -44,6 +45,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
+      <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
@@ -88,18 +90,22 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const creditLink = document.createElement('button');
   creditLink.type = 'button';
   creditLink.className = 'credit-link';
-  creditLink.textContent = '3D model credit';
+  creditLink.textContent = 'Asset credits';
   creditLink.setAttribute('aria-haspopup', 'dialog');
   help.append(' · ', creditLink);
 
   const creditDialog = document.createElement('dialog');
   creditDialog.className = 'asset-credit';
   creditDialog.innerHTML = `
-    <h2>3D model credit</h2>
+    <h2>Asset credits</h2>
     <p><a href="https://poly.pizza/m/bfb3C6hpdi0" target="_blank" rel="noopener"><cite>Chess Set</cite></a>
       by Pia Leung, licensed under
       <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="license noopener">CC BY 3.0</a>,
       via Poly Pizza.</p>
+    <p><a href="https://opengameart.org/content/cloudy-skyboxes-0" target="_blank" rel="noopener"><cite>Cloudy Skyboxes</cite></a>
+      by Screaming Brain Studios, released under
+      <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="license noopener">CC0</a>
+      into the public domain, via OpenGameArt. Credit is not required; this is here anyway.</p>
     <form method="dialog"><button>Close</button></form>`;
   creditLink.addEventListener('click', () => creditDialog.showModal());
   root.append(caption, help, creditDialog);
@@ -793,6 +799,39 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     if (legend) legend.hidden = colourMode === 'board';
     needsRender = true;
   });
+  // Background is the scene clear, not a canvas style. Leaving it null keeps
+  // the canvas transparent so the page shows through, which is what the viewer
+  // has always drawn against.
+  const OFF_WHITE = new THREE.Color('#f3f0e8');
+  const skyStatus = document.createElement('output');
+  skyStatus.setAttribute('aria-live', 'polite');
+  root.querySelector('.cube-controls').append(skyStatus);
+  let skyTexture = null;
+  let skyRequested = false;
+  let background = 'page';
+
+  function applyBackground() {
+    scene.background = background === 'paper' ? OFF_WHITE
+      : background === 'sky' ? skyTexture
+      : null;
+    needsRender = true;
+  }
+
+  root.querySelector('[aria-label="Background"]').addEventListener('change', (event) => {
+    background = event.target.value;
+    // A megabyte of sky is not worth fetching for the visitors who never ask
+    // for it, so the texture is loaded the first time it is chosen.
+    if (background === 'sky' && !skyRequested) {
+      skyRequested = true;
+      loadSkybox().then((texture) => {
+        if (disposed) return texture.dispose();
+        skyTexture = texture;
+        applyBackground();
+      }, () => { skyStatus.textContent = 'Sky texture unavailable.'; });
+    }
+    applyBackground();
+  });
+
   // Addressed by label, not by type: there are two range inputs now.
   root.querySelector('[aria-label="Layer spacing"]').addEventListener('input', (e) => {
     spacing = Number(e.target.value);
@@ -936,6 +975,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       pieceMesh?.geometry.dispose();
       pieceMesh?.material.dispose();
       atlas?.texture.dispose();
+      skyTexture?.dispose();
       modelPieces.dispose();
       renderer.dispose();
     },
