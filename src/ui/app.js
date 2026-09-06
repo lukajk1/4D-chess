@@ -350,11 +350,12 @@ function loadFromField() {
 }
 
 const ALLOWED_VARIANTS = new Set(['4d-4', '4d']);
+const VARIANT_LABELS = { '4d-4': '4⁴ board', '4d': '8⁴ board' };
 for (const [id, variant] of Object.entries(VARIANTS)) {
   if (!ALLOWED_VARIANTS.has(id)) continue;
   const option = document.createElement('option');
   option.value = id;
-  option.textContent = variant.name;
+  option.textContent = VARIANT_LABELS[id] ?? variant.name;
   els.variant.append(option);
 }
 els.variant.value = state.variantId;

@@ -74,6 +74,23 @@
   /* Reads over the lattice without a panel behind it. */
   text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
 }
+.axis-label-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+.axis-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: color-mix(in srgb, var(--ink) 72%, var(--muted));
+  font: 21px/1 ui-monospace, 'Cascadia Mono', monospace;
+  letter-spacing: .02em;
+  text-shadow: 0 0 5px var(--bg), 0 0 5px var(--bg), 0 0 2px var(--bg);
+  white-space: nowrap;
+}
+.axis-label.origin { color: var(--accent); font-weight: 650; }
 @media (max-width: 850px) {
   .cube-explorer { display: flex; flex-direction: column-reverse; gap: 24px; }
   .cube-view { position: static; width: 100%; }

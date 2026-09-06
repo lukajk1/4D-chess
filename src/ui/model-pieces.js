@@ -269,13 +269,14 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       }
       writeOutlines();
     },
-    spawnTossed(char, [x, y, z], scale = 1) {
+    spawnTossed(char, [x, y, z], scale = 1, opacity = 1) {
       if (!char) return;
       const type = char.toLowerCase();
       const cached = geometryCache.get(type);
       if (!cached) return;
 
       const mat = captureMaterial.clone();
+      mat.opacity *= opacity;
       const mesh = new THREE.Mesh(cached.geometry, mat);
       mesh.renderOrder = 4;
       mesh.scale.setScalar(scale * MODEL_SCALE);
@@ -297,6 +298,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
         ry: (Math.random() - 0.5) * 8,
         rz: (Math.random() - 0.5) * 10,
         startY: y,
+        startOpacity: mat.opacity,
       });
     },
     updateTossed(elapsed) {
@@ -314,7 +316,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
 
         const drop = p.startY - p.y;
         if (drop > 1.2) {
-          p.mat.opacity = Math.max(0, 0.62 * (1 - (drop - 1.2) / 3.5));
+          p.mat.opacity = Math.max(0, p.startOpacity * (1 - (drop - 1.2) / 3.5));
         }
 
         if (drop > 4.5 || p.mat.opacity <= 0.01) {

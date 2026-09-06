@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { envelope } from '../core/movegen.js';
-import { squareName } from '../core/notation.js';
+import { squareName, layerName, wName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { createModelPieces } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
@@ -31,6 +31,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     char: lastMove.captured,
     square: lastMove.to,
   } : null;
+  // The explorer restores its previous fold state immediately after creation.
+  // Wait one animation frame before placing capture debris so clone positions
+  // reflect that restored state instead of the initially folded geometry.
+  let captureSpawnReady = false;
   const count = pos.squares.length;
   const coords = pos.squares.map((_, i) => pos.coord(i));
   const center = pos.shape.map((n) => (n - 1) / 2);
@@ -58,6 +62,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
+      ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
       ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
@@ -82,6 +87,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   caption.className = 'cube-caption';
   caption.setAttribute('aria-live', 'polite');
 
+  // Screen-space notation that remains pinned to reference-axis vertices as
+  // OrbitControls turns the camera around the projected lattice.
+  const axisLabelLayer = document.createElement('div');
+  axisLabelLayer.className = 'axis-label-layer';
+  axisLabelLayer.setAttribute('aria-hidden', 'true');
+
   // The piece models are CC BY 3.0, which requires attribution, so this outlives
   // the footer it used to sit in and docks with the controls instead.
   const creditLink = document.createElement('button');
@@ -104,7 +115,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       into the public domain, via OpenGameArt. Credit is not required; this is here anyway.</p>
     <form method="dialog"><button>Close</button></form>`;
   creditLink.addEventListener('click', () => creditDialog.showModal());
-  root.append(caption, creditLink, creditDialog);
+  root.append(axisLabelLayer, caption, creditLink, creditDialog);
 
   // ---- three.js scene
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -181,7 +192,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     wColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     const loose = is4D && !slot.cell;
     pointSize[s] = basePointSize * wScaleOf(c) * (loose ? 0.62 : 1);
-    baseAlpha[s] = loose ? 0.22 : 1;
+    baseAlpha[s] = 1;
   });
   pointColors.set(cellColors);
 
@@ -319,6 +330,47 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     slots.forEach((slot, s) => { if (slot.cell) slotCell[s] = cells.indexOf(slot.cell); });
 
     measureNet();
+  }
+
+  // Use one coherent boundary cell for each axis so its labels continue along
+  // a single edge when the tesseract opens into a net. The shared zero point
+  // carries the complete address; subsequent ticks use their notation family.
+  const axisLabels = [];
+  const axisCarrier = (axis) => {
+    if (!is4D) return null;
+    const id = axis === 3 ? 'xmin' : 'wmin';
+    return cells.find((cell) => cell.id === id) ?? null;
+  };
+  const axisToken = (axis, value) => {
+    if (axis === 0) return squareName([pos.shape[0]], value);
+    if (axis === 1) return String(value + 1);
+    if (axis === 2) return layerName(value);
+    return wName(value);
+  };
+  const zeroCoord = new Array(pos.dims).fill(0);
+  const zeroLattice = pos.index(zeroCoord);
+  const addAxisLabel = (text, lattice, carrier, origin = false) => {
+    let slot = homeSlotOf[lattice];
+    if (carrier) {
+      const carried = slots.findIndex((entry) => entry.lattice === lattice && entry.cell === carrier);
+      if (carried >= 0) slot = carried;
+    }
+    if (slot < 0) return;
+    const element = document.createElement('span');
+    element.className = `axis-label${origin ? ' origin' : ''}`;
+    element.textContent = text;
+    axisLabelLayer.append(element);
+    axisLabels.push({ element, slot });
+  };
+  addAxisLabel(squareName(pos.shape, zeroLattice), zeroLattice, axisCarrier(0), true);
+  for (let axis = 0; axis < pos.dims; axis++) {
+    const carrier = axisCarrier(axis);
+    for (let value = 1; value < pos.shape[axis]; value++) {
+      const coord = new Array(pos.dims).fill(0);
+      coord[axis] = value;
+      const lattice = pos.index(coord);
+      addAxisLabel(axisToken(axis, value), lattice, carrier);
+    }
   }
 
   // Size the fully open net against the folded footprint. The two projections
@@ -634,6 +686,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let colourMode = 'board';
   let layer = null;
   let selected = null;
+  let showAxisLabels = true;
   let showPieces = true;
   let pieceMode = 'meshes';
   let rotationRunning = false;
@@ -988,6 +1041,31 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     needsRender = true;
   }
 
+  const labelPoint = new THREE.Vector3();
+  function updateAxisLabels() {
+    const canvasRect = canvas.getBoundingClientRect();
+    const layerRect = axisLabelLayer.getBoundingClientRect();
+    const midX = canvasRect.left + canvasRect.width / 2;
+    const midY = canvasRect.top + canvasRect.height / 2;
+    camera.updateMatrixWorld();
+    for (const label of axisLabels) {
+      labelPoint.fromArray(positions, label.slot * 3).project(camera);
+      const inView = labelPoint.z >= -1 && labelPoint.z <= 1
+        && labelPoint.x >= -1.08 && labelPoint.x <= 1.08
+        && labelPoint.y >= -1.08 && labelPoint.y <= 1.08;
+      label.element.hidden = !inView;
+      if (!inView) continue;
+      const x = canvasRect.left + (labelPoint.x + 1) * canvasRect.width / 2;
+      const y = canvasRect.top + (1 - labelPoint.y) * canvasRect.height / 2;
+      const dx = x - midX;
+      const dy = y - midY;
+      const length = Math.hypot(dx, dy) || 1;
+      const offset = 10;
+      label.element.style.left = `${x - layerRect.left + dx / length * offset}px`;
+      label.element.style.top = `${y - layerRect.top + dy / length * offset}px`;
+    }
+  }
+
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
 
@@ -1095,6 +1173,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     applyColors();
     needsRender = true;
   });
+  onSegment('Axis labels', (value) => {
+    showAxisLabels = value === 'on';
+    axisLabelLayer.hidden = !showAxisLabels;
+    needsRender = true;
+  });
   // Background is the scene clear, not a canvas style. Leaving it null keeps
   // the canvas transparent so the page shows through, which is what the viewer
   // has always drawn against.
@@ -1197,18 +1280,39 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     frame = requestAnimationFrame(tick);
     const elapsed = Math.min(.05, Math.max(0, (now - lastTick) / 1000));
     lastTick = now;
-    if (capturedToSpawn) {
+    if (capturedToSpawn && captureSpawnReady) {
       const sq = capturedToSpawn.square;
-      const s = homeSlotOf[sq];
-      if (s >= 0) {
+      const home = homeSlotOf[sq];
+      const captureSlots = is4D
+        ? slots.flatMap((slot, s) => slot.lattice === sq && visible(s) ? [s] : [])
+        : [home];
+      const spawnedAt = [];
+      for (const s of captureSlots) {
+        if (s < 0) continue;
         const capX = is4D ? positions[s * 3] : latticeFolded[sq * 3];
         const capY = is4D ? positions[s * 3 + 1] : latticeFolded[sq * 3 + 1];
         const capZ = is4D ? positions[s * 3 + 2] : latticeFolded[sq * 3 + 2];
+        // Folded clones occupy the same point. Emit once there, then fan out
+        // naturally as unfolding gives each cell copy a distinct position.
+        if (spawnedAt.some(([x, y, z]) => Math.hypot(capX - x, capY - y, capZ - z) < 0.001)) continue;
+        spawnedAt.push([capX, capY, capZ]);
         const capScale = is4D ? (pointSize[s] / basePointSize) : 1;
-        modelPieces.spawnTossed(capturedToSpawn.char, [capX, capY, capZ], capScale);
+        let capOpacity = 1;
+        if (is4D && s !== home) {
+          const apart = Math.hypot(
+            positions[s * 3] - positions[home * 3],
+            positions[s * 3 + 1] - positions[home * 3 + 1],
+            positions[s * 3 + 2] - positions[home * 3 + 2],
+          );
+          capOpacity = GHOST_ALPHA * Math.min(1, apart / 0.6);
+        }
+        if (capOpacity > 0.01) {
+          modelPieces.spawnTossed(capturedToSpawn.char, [capX, capY, capZ], capScale, capOpacity);
+        }
       }
       capturedToSpawn = null;
     }
+    captureSpawnReady = true;
 
     let positionsChanged = false;
     if (unfoldT !== unfoldTarget) {
@@ -1238,6 +1342,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     if (hasTossed) needsRender = true;
 
     if (controls.update() || needsRender) {
+      updateAxisLabels();
       renderer.render(scene, camera);
       needsRender = false;
     }
@@ -1263,6 +1368,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         showPieces,
         reachMode,
         colourMode,
+        showAxisLabels,
         wMode,
         wSpread,
         unfoldT,
@@ -1309,6 +1415,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
           btn.setAttribute('aria-pressed', String(btn.dataset.value === colourMode));
         });
         applyColors();
+      }
+      if (state.showAxisLabels !== undefined && state.showAxisLabels !== showAxisLabels) {
+        showAxisLabels = state.showAxisLabels;
+        axisLabelLayer.hidden = !showAxisLabels;
+        root.querySelectorAll('[aria-label="Axis labels"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String((btn.dataset.value === 'on') === showAxisLabels));
+        });
       }
       if (state.wMode !== undefined && state.wMode !== wMode) {
         wMode = state.wMode;
