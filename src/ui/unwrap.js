@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
-import { tesseractCells, localIndexIn, PLACEMENT } from './tesseract.js';
+import { tesseractCells, localIndexIn, PLACEMENT, hingeTree, unfoldCoord } from './tesseract.js';
 import { CELL_COLORS, readTheme } from './gl-shared.js';
 
 // The tesseract unfolded into 3D: the interior cell sits at the centre and the
@@ -133,17 +133,22 @@ export function createUnwrapView(pos, onSelect) {
     }
   }
 
-  // Where a board square sits inside its cell's box, in that box's local space.
+  // Where a board square sits inside its cell's box, using the real 4D
+  // unfolding so each cell's orientation -- including the mirrored outer cube
+  // -- matches the master view.
+  const hinges = hingeTree(cells);
+  const fullyOpen = cells.map(() => Math.PI / 2);
+  const span = extent / 2;
   function offsetWithin(cell, index) {
-    const local = localIndexIn(cell, pos.shape, index);
-    if (local < 0) return null;
-    const c = [
-      local % cell.size[0],
-      Math.floor(local / cell.size[0]) % cell.size[1],
-      Math.floor(local / (cell.size[0] * cell.size[1])) % cell.size[2],
-    ];
-    const span = cell.size.map((n) => (n - 1) / 2);
-    return new THREE.Vector3(c[0] - span[0], c[2] - span[2], -(c[1] - span[1]));
+    if (localIndexIn(cell, pos.shape, index) < 0) return null;
+    const c = [];
+    let rest = index;
+    for (let a = 0; a < 4; a++) { c.push(rest % pos.shape[a]); rest = Math.floor(rest / pos.shape[a]); }
+    const u = unfoldCoord(c, cells.indexOf(cell), hinges, fullyOpen);
+    // PLACEMENT is in world axes; the unfolded point is in lattice axes.
+    const D = PLACEMENT[cell.id];
+    const landing = [span + D[0] * extent, span - D[2] * extent, span + D[1] * extent];
+    return new THREE.Vector3(u[0] - landing[0], u[2] - landing[2], -(u[1] - landing[1]));
   }
 
   const raycaster = new THREE.Raycaster();

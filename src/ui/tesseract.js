@@ -128,3 +128,57 @@ export const isInterior = (shape, index) => {
   }
   return true;
 };
+
+// ---------------------------------------------------------------------------
+// Unfolding, done as it actually happens: in 4D.
+//
+// The net is a tree. Every non-root cell hinges on the face it shares with its
+// parent, and unfolding rotates it about that face -- a rotation in the plane
+// spanned by the two pinned axes (the cell's and its parent's). A child's
+// rotation is then carried along by its parent's, so the outer cube rides on
+// the arm it is attached to.
+//
+// Restricted to 3D this is not always a rotation: a cell that flips over
+// through w comes out mirrored, which is why the outer cube ends up inside out.
+// ---------------------------------------------------------------------------
+
+const PARENT = { xmin: 'wmin', xmax: 'wmin', ymin: 'wmin', ymax: 'wmin', zmin: 'wmin', zmax: 'wmin', wmax: 'zmin' };
+
+export function hingeTree(cells) {
+  const index = new Map(cells.map((cell, i) => [cell.id, i]));
+  return cells.map((cell) => {
+    const parentId = PARENT[cell.id];
+    if (!parentId) return { cell, parent: -1 };
+    const parent = cells[index.get(parentId)];
+    // The cell swings away from its parent along its own pinned axis; sigma
+    // picks the rotation sense that achieves that for this pair of ends.
+    const awayC = cell.at === 0 ? -1 : 1;
+    const towardP = parent.at === 0 ? 1 : -1;
+    return {
+      cell,
+      parent: index.get(parentId),
+      axisC: cell.axis, centreC: cell.at,
+      axisP: parent.axis, centreP: parent.at,
+      sigma: -awayC * towardP,
+    };
+  });
+}
+
+// Rotate a 4D point about one hinge, in place.
+function turn(p, h, angle) {
+  const dc = p[h.axisC] - h.centreC;
+  const dp = p[h.axisP] - h.centreP;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  p[h.axisC] = h.centreC + dc * cos - h.sigma * dp * sin;
+  p[h.axisP] = h.centreP + h.sigma * dc * sin + dp * cos;
+}
+
+// Unfold one point of a cell by the given per-cell angles, walking up the tree.
+export function unfoldCoord(coord, cellIndex, hinges, angles, out = [0, 0, 0, 0]) {
+  for (let k = 0; k < 4; k++) out[k] = coord[k];
+  for (let i = cellIndex; hinges[i].parent >= 0; i = hinges[i].parent) {
+    turn(out, hinges[i], angles[i]);
+  }
+  return out;
+}

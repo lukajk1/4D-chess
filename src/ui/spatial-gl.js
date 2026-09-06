@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
-import { isInterior, tesseractCells, latticeStats, localIndexIn, localCoordIn, PLACEMENT } from './tesseract.js';
+import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, POINT_VERTEX, POINT_FRAGMENT,
   LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
@@ -35,6 +35,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     <div class="cube-controls">
       <label>${is4D ? '3D camera' : 'Projection'} <select aria-label="Projection"><option value="orthographic">Orthographic</option><option value="perspective">Perspective</option></select></label>
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
+      ${is4D ? '<label>Colour <select aria-label="Point colouring"><option value="cell">By cell</option><option value="board">Chessboard</option></select></label>' : ''}
       <label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
@@ -111,72 +112,107 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const pointColors = new Float32Array(slotCount * 3);
   const pointAlpha = new Float32Array(slotCount).fill(1);
   const pointSize = new Float32Array(slotCount);
-  const sizeFolded = new Float32Array(slotCount);
-  const sizeUnfolded = new Float32Array(slotCount);
   const baseAlpha = new Float32Array(slotCount).fill(1);
   const scratch = new THREE.Color();
 
+  // Two colourings, switchable at runtime: one colour per cell so the interior
+  // and outer cubes read as whole objects, or the chessboard parity used on
+  // every other board in the app.
+  const cellColors = new Float32Array(slotCount * 3);
+  const boardColors = new Float32Array(slotCount * 3);
   slots.forEach((slot, s) => {
     const c = coords[slot.lattice];
     const parity = c.reduce((a, b) => a + b, 0) % 2;
-    // One colour per cell, so the interior and outer cubes read as whole
-    // objects. The six face cells keep the sector colours they already had.
-    scratch.set(is4D
-      ? (slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted)
-      : parity ? theme.dark : theme.light);
-    pointColors.set([scratch.r, scratch.g, scratch.b], s * 3);
+    scratch.set(parity ? theme.dark : theme.light);
+    boardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
+    scratch.set(is4D ? (slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted) : parity ? theme.dark : theme.light);
+    cellColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     const loose = is4D && !slot.cell;
-    sizeFolded[s] = basePointSize * wScaleOf(c) * (loose ? 0.62 : 1);
-    sizeUnfolded[s] = basePointSize * (loose ? 0.62 : 1);
-    pointSize[s] = sizeFolded[s];
+    pointSize[s] = basePointSize * wScaleOf(c) * (loose ? 0.62 : 1);
     baseAlpha[s] = loose ? 0.22 : 1;
   });
+  pointColors.set(cellColors);
 
-  // ---- where every slot lands once unfolded, scaled to occupy about the same
-  // screen space as the folded tesseract so the camera never has to move.
-  const netTarget = new Float32Array(slotCount * 3);
-  const netCorners = [];
+  // ---- unfolding, as 4D hinge rotations projected to 3D
+  //
+  // Each cell turns a quarter turn about the face it shares with its parent,
+  // inside its own time window, and rides along with its parent's turn. The
+  // outer cube peels off first, the arm it hangs from lays down next, and the
+  // remaining flaps follow. Reversing t reverses all of it, so the outer cube
+  // is put back on last.
+  //
+  // A cell that flips over through w arrives mirrored -- the outer cube comes
+  // out inside out. That is real: its 3D shadow flattens and re-emerges.
+  const slotCell = new Int8Array(slotCount).fill(-1);
+  const hinges = is4D ? hingeTree(cells) : [];
+  const STAGE = {
+    wmax: [0.00, 0.30],
+    zmin: [0.26, 0.56], zmax: [0.26, 0.56],
+    ymin: [0.48, 0.76], ymax: [0.48, 0.76],
+    xmin: [0.68, 0.96], xmax: [0.68, 0.96],
+    wmin: [0, 1],
+  };
+  const stageStart = new Float32Array(8);
+  const stageEnd = new Float32Array(8);
+  const angles = new Float64Array(8);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const smooth = (u) => u * u * (3 - 2 * u);
+  const angleAt = (t, ci) => smooth(clamp01((t - stageStart[ci]) / (stageEnd[ci] - stageStart[ci]))) * Math.PI / 2;
+
+  // The 4D camera sits on the w axis. Close in, the nesting is dramatic; but a
+  // cell swinging up past w = max would cross the camera plane, so it pulls
+  // back early in the unfold.
+  const K_FOLDED = 2.5;
+  const K_UNFOLDED = 6;
+  const cameraK = (t) => K_FOLDED + (K_UNFOLDED - K_FOLDED) * smooth(clamp01(t / 0.25));
+  const wScaleAt = (w, K) => (is4D ? K / (K - (w - center[3]) / (center[3] || 1)) : 1);
+
+  // Project a 4D point for a given camera, scale and spacing. Returns wScale.
+  function projectAt(c, K, g, sp, out) {
+    const ws = wScaleAt(c[3], K);
+    out[0] = (c[0] - center[0]) * ws * g;
+    out[1] = (c[2] - center[2]) * sp * ws * g;
+    out[2] = -(c[1] - center[1]) * ws * g;
+    return ws;
+  }
+
+  // The finished net is bigger and off-centre relative to the folded tesseract
+  // (the outer cube hangs below), so it is eased into a fit as it opens.
+  let fitScale = 1;
+  const netMid = [0, 0, 0];
+  const cornerCoords = [];    // per cell, its 8 corner lattice points in 4D
+  const CORNER_EDGES = [];    // the 12 edges of a cube as corner index pairs
+  for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) {
+    if (((a ^ b) & ((a ^ b) - 1)) === 0) CORNER_EDGES.push(a, b);   // differ in one bit
+  }
+  const coord4 = [0, 0, 0, 0];
+  const proj = [0, 0, 0];
   if (is4D) {
-    const extent = pos.shape[0] - 1;
-    const step = extent * 1.04;
-    const place = (cell, lc) => {
-      const span = cell.size.map((n) => (n - 1) / 2);
-      const at = PLACEMENT[cell.id];
-      return [
-        at[0] * step + (lc[0] - span[0]),
-        at[1] * step + (lc[2] - span[2]),
-        at[2] * step - (lc[1] - span[1]),
-      ];
-    };
+    cells.forEach((cell, ci) => {
+      [stageStart[ci], stageEnd[ci]] = STAGE[cell.id];
+      const corners = [];
+      for (let bits = 0; bits < 8; bits++) {
+        const c = [0, 0, 0, 0];
+        c[cell.axis] = cell.at;
+        cell.free.forEach((axis, k) => { c[axis] = (bits >> k) & 1 ? cell.size[k] - 1 : 0; });
+        corners.push(c);
+      }
+      cornerCoords.push(corners);
+    });
+    slots.forEach((slot, s) => { if (slot.cell) slotCell[s] = cells.indexOf(slot.cell); });
+
+    // Size the fully open net against the folded footprint.
+    const full = cells.map(() => Math.PI / 2);
     const lo = [Infinity, Infinity, Infinity];
     const hi = [-Infinity, -Infinity, -Infinity];
-    const raw = new Float32Array(slotCount * 3);
-    slots.forEach((slot, s) => {
-      if (!slot.cell) return;
-      const p = place(slot.cell, localCoordIn(slot.cell, localIndexIn(slot.cell, pos.shape, slot.lattice)));
-      raw.set(p, s * 3);
-      for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
-    });
-    const mid = lo.map((v, k) => (v + hi[k]) / 2);
-    const netScale = radius / (Math.hypot(...hi.map((v, k) => v - mid[k])) || 1);
-    slots.forEach((slot, s) => {
-      if (!slot.cell) return;
-      for (let k = 0; k < 3; k++) netTarget[s * 3 + k] = (raw[s * 3 + k] - mid[k]) * netScale;
-    });
-    // Box outlines for each cell, in the same net space.
-    for (const cell of cells) {
-      const corners = [];
-      for (const a of [0, cell.size[0] - 1]) for (const b of [0, cell.size[1] - 1]) for (const d of [0, cell.size[2] - 1]) {
-        const p = place(cell, [a, b, d]);
-        corners.push(p.map((v, k) => (v - mid[k]) * netScale));
+    cornerCoords.forEach((corners, ci) => {
+      for (const c of corners) {
+        projectAt(unfoldCoord(c, ci, hinges, full, coord4), K_UNFOLDED, 1, 1, proj);
+        for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], proj[k]); hi[k] = Math.max(hi[k], proj[k]); }
       }
-      for (let a = 0; a < corners.length; a++) {
-        for (let b = a + 1; b < corners.length; b++) {
-          const differing = [0, 1, 2].reduce((n, k) => n + (Math.abs(corners[a][k] - corners[b][k]) < 1e-6 ? 0 : 1), 0);
-          if (differing === 1) netCorners.push(...corners[a], ...corners[b]);
-        }
-      }
-    }
+    });
+    for (let k = 0; k < 3; k++) netMid[k] = (lo[k] + hi[k]) / 2;
+    fitScale = radius / (Math.hypot(...hi.map((v, k) => v - netMid[k])) || 1);
   }
 
   const pointGeometry = new THREE.BufferGeometry();
@@ -212,17 +248,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   for (const x of [0, maxX]) for (const y of [0, maxY]) for (const z of [0, maxZ]) boxCorners.push([x, y, z]);
 
   if (is4D) {
-    // A tesseract frame: the interior cell (w minimum), the outer cell (w
-    // maximum), and the eight edges joining matching corners. Drawing a box at
-    // every w produced eight nested cubes, which is not a tesseract -- the
-    // cells of a tesseract meet at faces.
-    const maxW = pos.shape[3] - 1;
-    for (const w of [0, maxW]) {
-      cubeEdges(boxCorners, (a, b) => edgePairs.push({ a: at([...a, w]), b: at([...b, w]), z: null, w: null }));
-    }
-    for (const corner of boxCorners) {
-      edgePairs.push({ a: at([...corner, 0]), b: at([...corner, maxW]), z: null, w: null });
-    }
+    // Drawn per cell and animated with the unfold; see writeCellFrame.
   } else {
     for (let z = 0; z < pos.shape[2]; z++) {
       for (let x = 0; x < pos.shape[0]; x++) edgePairs.push({ a: at([x, 0, z]), b: at([x, maxY, z]), z, w: null });
@@ -250,20 +276,23 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   scene.add(wireframe);
 
   let netFrameMaterial = null;
+  let cellFrameGeometry = null;
+  const cellFramePositions = new Float32Array(is4D ? cells.length * CORNER_EDGES.length * 3 : 0);
   if (is4D) {
-    const netGeometry = new THREE.BufferGeometry();
-    netGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(netCorners), 3));
-    netGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(netCorners.length / 3).fill(0.32), 1));
+    cellFrameGeometry = new THREE.BufferGeometry();
+    cellFrameGeometry.setAttribute('position', new THREE.BufferAttribute(cellFramePositions, 3));
+    cellFrameGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(cellFramePositions.length / 3).fill(0.32), 1));
     netFrameMaterial = new THREE.ShaderMaterial({
       vertexShader: LINE_VERTEX,
       fragmentShader: LINE_FRAGMENT,
       transparent: true,
       depthWrite: false,
-      uniforms: { uColor: { value: new THREE.Color(theme.muted) }, uFade: { value: 0 } },
+      uniforms: { uColor: { value: new THREE.Color(theme.muted) }, uFade: { value: 1 } },
     });
-    const netFrame = new THREE.LineSegments(netGeometry, netFrameMaterial);
-    netFrame.renderOrder = 0;
-    scene.add(netFrame);
+    const cellFrame = new THREE.LineSegments(cellFrameGeometry, netFrameMaterial);
+    cellFrame.frustumCulled = false;
+    cellFrame.renderOrder = 0;
+    scene.add(cellFrame);
   }
 
   // ---- pieces as one instanced, billboarded quad
@@ -353,8 +382,6 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     }
   }
 
-  const ease = () => unfoldT * unfoldT * (3 - 2 * unfoldT);
-
   function syncHalo() {
     const alpha = haloGeometry.attributes.aAlpha.array;
     const where = haloGeometry.attributes.position.array;
@@ -373,21 +400,47 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     haloGeometry.computeBoundingSphere();
   }
 
-  function writeSlotPositions() {
-    const t = ease();
-    for (let s = 0; s < slotCount; s++) {
-      const l = slotLattice[s] * 3;
-      const travels = is4D && slots[s].cell;
-      for (let k = 0; k < 3; k++) {
-        positions[s * 3 + k] = travels
-          ? latticeFolded[l + k] * (1 - t) + netTarget[s * 3 + k] * t
-          : latticeFolded[l + k];
+  function writeCellFrame(K, g, shift) {
+    let o = 0;
+    cornerCoords.forEach((corners, ci) => {
+      const pts = corners.map((c) => {
+        const out = [0, 0, 0];
+        projectAt(unfoldCoord(c, ci, hinges, angles, coord4), K, g, spacing, out);
+        return out.map((v, k) => v - shift[k]);
+      });
+      for (let e = 0; e < CORNER_EDGES.length; e += 2) {
+        cellFramePositions.set(pts[CORNER_EDGES[e]], o);
+        cellFramePositions.set(pts[CORNER_EDGES[e + 1]], o + 3);
+        o += 6;
       }
-      pointSize[s] = sizeFolded[s] * (1 - t) + sizeUnfolded[s] * t;
+    });
+    cellFrameGeometry.attributes.position.needsUpdate = true;
+  }
+
+  function writeSlotPositions() {
+    const t = unfoldT;
+    const K = cameraK(t);
+    const open = smooth(t);
+    const g = 1 + (fitScale - 1) * open;
+    const shift = netMid.map((v) => v * g * open);
+    for (let ci = 0; ci < angles.length; ci++) angles[ci] = angleAt(t, ci);
+
+    for (let s = 0; s < slotCount; s++) {
+      const c = coords[slotLattice[s]];
+      const ci = slotCell[s];
+      const ws = ci >= 0
+        ? projectAt(unfoldCoord(c, ci, hinges, angles, coord4), K, g, spacing, proj)
+        : projectAt(c, K, g, spacing, proj);
+      positions[s * 3] = proj[0] - shift[0];
+      positions[s * 3 + 1] = proj[1] - shift[1];
+      positions[s * 3 + 2] = proj[2] - shift[2];
+      // Nearer the 4D camera reads larger, exactly as the lattice spacing does.
+      pointSize[s] = basePointSize * ws * g * (is4D && ci < 0 ? 0.62 : 1);
     }
     pointGeometry.attributes.position.needsUpdate = true;
     pointGeometry.attributes.aSize.needsUpdate = true;
     pointGeometry.computeBoundingSphere();
+    if (is4D) writeCellFrame(K, g, shift);
     syncHalo();
   }
 
@@ -420,15 +473,13 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   };
 
   function applyFilters() {
-    const t = ease();
+    const t = unfoldT;
     for (let s = 0; s < slotCount; s++) {
       // Points on no cell have nowhere to unfold to, so they fade away.
-      const fade = is4D && !slots[s].cell ? 1 - t : 1;
+      const fade = is4D && !slots[s].cell ? 1 - Math.min(1, t / 0.5) : 1;
       pointAlpha[s] = (visible(s) ? baseAlpha[s] : 0.06) * fade;
     }
     pointGeometry.attributes.aAlpha.needsUpdate = true;
-    edgeMaterial.uniforms.uFade.value = 1 - t;
-    if (netFrameMaterial) netFrameMaterial.uniforms.uFade.value = t;
 
     edgePairs.forEach((edge, i) => {
       // The tesseract frame stays whole; only the 3D board grids answer to
@@ -529,6 +580,15 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     cellFilter = cellSelect.value === 'all' ? null : cells[Number(cellSelect.value)];
     applyFilters();
   });
+  root.querySelector('[aria-label="Point colouring"]')?.addEventListener('change', (e) => {
+    const byBoard = e.target.value === 'board';
+    pointColors.set(byBoard ? boardColors : cellColors);
+    pointGeometry.attributes.aColor.needsUpdate = true;
+    // The legend names cells, so it only applies to the cell colouring.
+    const legend = root.querySelector('.w-legend');
+    if (legend) legend.hidden = byBoard;
+    needsRender = true;
+  });
   root.querySelector('input[type=range]').addEventListener('input', (e) => {
     spacing = Number(e.target.value);
     rebuildPositions();
@@ -550,8 +610,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     if (disposed) return;
     frame = requestAnimationFrame(tick);
     if (unfoldT !== unfoldTarget) {
-      // About three quarters of a second end to end, eased in writeSlotPositions.
-      const stepSize = 1 / 45;
+      // Around 3.3s end to end, long enough to read each stage.
+      const stepSize = 1 / 200;
       unfoldT = unfoldTarget > unfoldT
         ? Math.min(unfoldTarget, unfoldT + stepSize)
         : Math.max(unfoldTarget, unfoldT - stepSize);
