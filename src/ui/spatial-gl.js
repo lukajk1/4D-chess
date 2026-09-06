@@ -62,7 +62,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
-      ${segmented('Space style', 'Space style', [['squares', 'Squares'], ['verts', 'Points']], 'squares')}
+      ${segmented('Space style', 'Space style', [['squares', 'Squares'], ['opaque', 'Opaque'], ['verts', 'Points']], 'squares')}
       ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
@@ -424,20 +424,28 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   faintCloud.renderOrder = 2;
   scene.add(faintCloud);
 
-  // A square is centred on each lattice point rather than filling the gap
-  // between four points. That deliberately leaves a half-square overhang at
-  // the board edges. The tiles stay horizontal at each point's world height.
+  // A shallow block is centred on each lattice point rather than filling the
+  // gap between four points. Its top stays at the point's exact world height;
+  // the body extends downward and deliberately overhangs each edge by half a
+  // square. Back-face culling prevents its far wall doubling its own opacity.
   const tileGeometry = new THREE.InstancedBufferGeometry();
-  tileGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
-  ]), 3));
-  tileGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+  const tileBox = new THREE.BoxGeometry(1, 0.03, 1);
+  tileBox.translate(0, -0.015, 0);
+  tileGeometry.setAttribute('position', tileBox.attributes.position.clone());
+  tileGeometry.setAttribute('normal', tileBox.attributes.normal.clone());
+  tileGeometry.setIndex(tileBox.index.clone());
+  tileBox.dispose();
   tileGeometry.instanceCount = slotCount;
   tileGeometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(positions, 3));
   tileGeometry.setAttribute('aScale', new THREE.InstancedBufferAttribute(tileScale, 1));
   tileGeometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(pointColors, 3));
   tileGeometry.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(tileAlpha, 1));
   const tileMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uOpacity: { value: 0.28 },
+      uEnvironment: { value: null },
+      uEnvironmentStrength: { value: 0 },
+    },
     vertexShader: `
       attribute vec3 aCenter;
       attribute float aScale;
@@ -445,22 +453,39 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       attribute float aAlpha;
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vShade;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPosition;
       void main() {
         vColor = aColor;
         vAlpha = aAlpha;
+        vShade = normal.y > 0.5 ? 1.0 : (normal.y < -0.5 ? 0.58 : 0.76);
         vec3 at = aCenter + position * aScale;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(at, 1.0);
+        vec4 worldPosition = modelMatrix * vec4(at, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
       }`,
     fragmentShader: `
+      uniform float uOpacity;
+      uniform samplerCube uEnvironment;
+      uniform float uEnvironmentStrength;
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vShade;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPosition;
       void main() {
         if (vAlpha <= 0.001) discard;
-        gl_FragColor = vec4(vColor, vAlpha * 0.28);
+        vec3 base = vColor * vShade;
+        vec3 eye = normalize(vWorldPosition - cameraPosition);
+        vec3 reflected = reflect(eye, normalize(vWorldNormal));
+        vec3 environment = textureCube(uEnvironment, reflected).rgb;
+        gl_FragColor = vec4(mix(base, environment, uEnvironmentStrength), vAlpha * uOpacity);
       }`,
     transparent: true,
     depthWrite: false,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
   const tileMesh = new THREE.Mesh(tileGeometry, tileMaterial);
   tileMesh.frustumCulled = false;
@@ -995,7 +1020,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const shownTargets = [];
 
   function writeHighlights() {
-    const squareMode = latticeMode === 'squares' && reachMode === 'points';
+    const squareMode = latticeMode !== 'verts' && reachMode === 'points';
     if (squareMode) {
       highlightWire.visible = false;
       highlightFill.visible = false;
@@ -1148,7 +1173,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
     pointGeometry.attributes.aAlpha.needsUpdate = true;
     tileGeometry.attributes.aAlpha.needsUpdate = true;
-    tileMesh.visible = latticeMode === 'squares';
+    const squareMode = latticeMode !== 'verts';
+    tileMesh.visible = squareMode;
+    tileMaterial.uniforms.uOpacity.value = latticeMode === 'opaque' ? 1 : 0.28;
+    tileMaterial.uniforms.uEnvironmentStrength.value = latticeMode === 'opaque' && tileMaterial.uniforms.uEnvironment.value ? .22 : 0;
+    tileMaterial.depthWrite = latticeMode === 'opaque';
 
     edgePairs.forEach((edge, i) => {
       // The tesseract frame stays whole; only the 3D board grids answer to
@@ -1344,6 +1373,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   onSegment('Space style', (value) => {
     latticeMode = value;
     applyFilters();
+    writeHighlights();
   });
   onSegment('Axis labels', (value) => {
     showAxisLabels = value === 'on';
@@ -1365,21 +1395,27 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     scene.background = background === 'paper' ? OFF_WHITE
       : background === 'sky' ? skyTexture
       : null;
+    scene.environment = background === 'sky' ? skyTexture : null;
+    tileMaterial.uniforms.uEnvironment.value = scene.environment;
+    tileMaterial.uniforms.uEnvironmentStrength.value = latticeMode === 'opaque' && scene.environment ? .22 : 0;
     needsRender = true;
+  }
+
+  function requestSkybox() {
+    if (skyRequested) return;
+    skyRequested = true;
+    loadSkybox().then((texture) => {
+      if (disposed) return texture.dispose();
+      skyTexture = texture;
+      applyBackground();
+    }, () => { skyStatus.textContent = 'Sky texture unavailable.'; });
   }
 
   root.querySelector('[aria-label="Background"]').addEventListener('change', (event) => {
     background = event.target.value;
     // A megabyte of sky is not worth fetching for the visitors who never ask
     // for it, so the texture is loaded the first time it is chosen.
-    if (background === 'sky' && !skyRequested) {
-      skyRequested = true;
-      loadSkybox().then((texture) => {
-        if (disposed) return texture.dispose();
-        skyTexture = texture;
-        applyBackground();
-      }, () => { skyStatus.textContent = 'Sky texture unavailable.'; });
-    }
+    if (background === 'sky') requestSkybox();
     applyBackground();
   });
 
@@ -1644,6 +1680,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         background = state.background;
         const bgSelect = root.querySelector('[aria-label="Background"]');
         if (bgSelect) bgSelect.value = background;
+        if (background === 'sky') requestSkybox();
         applyBackground();
       }
 

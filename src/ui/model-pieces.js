@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeVertices, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
 // Original king is 8.96 units high. One shared scale preserves the set's proportions.
@@ -12,6 +12,9 @@ const OUTLINE_MAX = 8;
 // MODEL_SCALE, so a fixed offset here is a fixed width for pawn and king alike
 // -- which growing the hull by a percentage would not give.
 const OUTLINE_WIDTH = .34;
+// Smooth the lathed and rounded surfaces while preserving deliberate corners
+// such as base rims, rook crenellations, and the king's cross.
+const CREASE_ANGLE = THREE.MathUtils.degToRad(85);
 
 // An inverted hull: the same mesh grown along its normals, back faces only, so
 // the piece itself covers all of it but the rim. Cheaper than a postprocessing
@@ -65,9 +68,11 @@ function loadPieceGeometry(type) {
     const source = meshes[0];
     gltf.scene.updateMatrixWorld(true);
     source.geometry.applyMatrix4(source.matrixWorld);
+    const geometry = toCreasedNormals(source.geometry, CREASE_ANGLE);
+    if (geometry !== source.geometry) source.geometry.dispose();
     (Array.isArray(source.material) ? source.material : [source.material]).forEach(m => m.dispose());
-    const hull = hullOf(source.geometry);
-    const entry = { geometry: source.geometry, hull };
+    const hull = hullOf(geometry);
+    const entry = { geometry, hull };
     geometryCache.set(type, entry);
     return entry;
   })();
@@ -81,16 +86,18 @@ for (const type of Object.keys(FILES)) {
 }
 
 export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d') {
-  const material = new THREE.MeshStandardMaterial({ roughness: .68, metalness: 0 });
+  const material = new THREE.MeshStandardMaterial({ roughness: .24, metalness: .04, envMapIntensity: .72 });
   const ghostMaterial = new THREE.MeshStandardMaterial({
-    roughness: .68, metalness: 0, transparent: true, opacity: .42, depthWrite: false,
+    roughness: .3, metalness: .03, envMapIntensity: .6,
+    transparent: true, opacity: .42, depthWrite: false,
   });
   const captureMaterial = new THREE.MeshStandardMaterial({
     color: '#ff2828',
     emissive: '#880000',
     emissiveIntensity: 0.35,
-    roughness: 0.3,
+    roughness: 0.2,
     metalness: 0.1,
+    envMapIntensity: .65,
     transparent: true,
     opacity: 0.62,
     depthWrite: false,
@@ -99,8 +106,9 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     color: '#ff2828',
     emissive: '#880000',
     emissiveIntensity: 0.2,
-    roughness: 0.3,
+    roughness: 0.24,
     metalness: 0.1,
+    envMapIntensity: .55,
     transparent: true,
     opacity: 0.32,
     depthWrite: false,

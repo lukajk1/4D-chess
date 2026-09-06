@@ -612,7 +612,10 @@ body:not(.inspection) main { padding: 12px 22px 22px; }
    the WebGL surface reaches the top, bottom, and right browser edges. The
    variant picker already floats above the scene, so it needs no reserved row. */
 @media (min-width: 901px) {
-  body.inspection { overflow: hidden; }
+  body.inspection {
+    --explorer-controls-width: clamp(302px, 27.36vw, 396px);
+    overflow: hidden;
+  }
   .inspection main {
     width: 100vw;
     height: 100vh;
@@ -622,8 +625,8 @@ body:not(.inspection) main { padding: 12px 22px 22px; }
   .inspection .layout > section,
   .inspection #board-area { width: 100%; height: 100%; min-height: 0; }
   .explorer-shell { height: 100%; min-height: 0; margin: 0; gap: 0; }
-  .explorer-controls { flex-basis: 232px; padding: 16px; }
-  .inspection #variant-dock { left: 232px; }
+  .explorer-controls { flex-basis: var(--explorer-controls-width); padding: 16px; }
+  .inspection #variant-dock { left: var(--explorer-controls-width); }
   .inspection:has(.explorer-side:not([hidden])) #variant-dock { right: 380px; }
   .explorer-main,
   .explorer-main > .cube-view,
