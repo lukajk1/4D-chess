@@ -1175,9 +1175,17 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       (inst) => visible(inst.slot), capturable);
   }
 
+  let canvasWidth = 0;
+  let canvasHeight = 0;
   function resize() {
-    const width = canvas.clientWidth || 600;
-    const height = canvas.clientHeight || 600;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    // Creation happens before the viewer is attached to the explorer shell.
+    // Wait for real layout dimensions rather than projecting a disposable
+    // 600px square frame that would make overlays jump on the next paint.
+    if (!width || !height) return;
+    canvasWidth = width;
+    canvasHeight = height;
     renderer.setSize(width, height, false);
     perspective.aspect = width / height;
     perspective.updateProjectionMatrix();
@@ -1442,6 +1450,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   function tick(now = performance.now()) {
     if (disposed) return;
     frame = requestAnimationFrame(tick);
+    if (canvas.clientWidth !== canvasWidth || canvas.clientHeight !== canvasHeight) resize();
     const elapsed = Math.min(.05, Math.max(0, (now - lastTick) / 1000));
     lastTick = now;
     if (capturedToSpawn && captureSpawnReady) {
