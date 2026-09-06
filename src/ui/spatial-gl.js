@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
+import {
+  W_COLORS, readTheme, POINT_VERTEX, POINT_FRAGMENT,
+  LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
+} from './gl-shared.js';
 
 // WebGL viewer for the lattice. The 4D -> 3D projection stays here in JS
 // because it is part of the model; three.js only handles 3D -> 2D and raster.
@@ -9,133 +13,6 @@ import { nameOf } from '../core/pieces.js';
 // Everything the camera touches lives in three buffers -- lattice points, wire
 // edges and billboarded piece glyphs -- so a frame costs three draw calls
 // regardless of whether there are 512 positions or 4,096.
-
-const W_COLORS = ['#698d88', '#629d8a', '#65ad82', '#87b975', '#b4bf70', '#d1b96e', '#dda275', '#df877a'];
-
-const readTheme = () => {
-  const style = getComputedStyle(document.documentElement);
-  const pick = (name, fallback) => (style.getPropertyValue(name).trim() || fallback);
-  return {
-    light: pick('--light-square', '#ebe6dd'),
-    dark: pick('--dark-square', '#9aa88f'),
-    muted: pick('--muted', '#6b7480'),
-    selected: pick('--selected', '#e8c27d'),
-  };
-};
-
-const POINT_VERTEX = `
-  attribute float aSize;
-  attribute float aAlpha;
-  attribute vec3 aColor;
-  varying vec3 vColor;
-  varying float vAlpha;
-  uniform float uHalfHeight;
-  uniform float uPerspective;
-  void main() {
-    vColor = aColor;
-    vAlpha = aAlpha;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_Position = projectionMatrix * mv;
-    // projectionMatrix[1][1] converts world units to clip units for both
-    // camera types, so one expression covers orthographic and perspective.
-    float px = aSize * uHalfHeight * projectionMatrix[1][1];
-    gl_PointSize = uPerspective > 0.5 ? px / max(-mv.z, 0.0001) : px;
-  }`;
-
-const POINT_FRAGMENT = `
-  varying vec3 vColor;
-  varying float vAlpha;
-  void main() {
-    // Round the square point sprite and feather its edge.
-    float d = length(gl_PointCoord - vec2(0.5));
-    if (d > 0.5) discard;
-    gl_FragColor = vec4(vColor, vAlpha * smoothstep(0.5, 0.42, d));
-  }`;
-
-const LINE_VERTEX = `
-  attribute float aAlpha;
-  varying float vAlpha;
-  void main() {
-    vAlpha = aAlpha;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }`;
-
-const LINE_FRAGMENT = `
-  varying float vAlpha;
-  uniform vec3 uColor;
-  void main() { gl_FragColor = vec4(uColor, vAlpha); }`;
-
-const PIECE_VERTEX = `
-  attribute vec3 aCenter;
-  attribute vec2 aCell;
-  attribute float aHidden;
-  varying vec2 vUv;
-  varying vec2 vCell;
-  varying float vHidden;
-  uniform float uSize;
-  void main() {
-    vUv = uv;
-    vCell = aCell;
-    vHidden = aHidden;
-    // Billboard by offsetting in view space, which faces the camera under
-    // both projections without any per-frame CPU work.
-    vec4 mv = modelViewMatrix * vec4(aCenter, 1.0);
-    mv.xy += position.xy * uSize;
-    gl_Position = projectionMatrix * mv;
-  }`;
-
-const PIECE_FRAGMENT = `
-  varying vec2 vUv;
-  varying vec2 vCell;
-  varying float vHidden;
-  uniform sampler2D uAtlas;
-  uniform vec2 uGrid;
-  void main() {
-    if (vHidden > 0.5) discard;
-    // Atlas rows run top-down; the quad's v runs bottom-up.
-    vec2 uv = (vCell + vec2(vUv.x, 1.0 - vUv.y)) / uGrid;
-    vec4 texel = texture2D(uAtlas, uv);
-    // Alpha test rather than blending, so glyphs need no depth sorting.
-    if (texel.a < 0.4) discard;
-    gl_FragColor = vec4(texel.rgb, 1.0);
-  }`;
-
-function buildGlyphAtlas(chars, glyphFor) {
-  const cell = 128;
-  const cols = Math.max(1, Math.ceil(Math.sqrt(chars.length)));
-  const rows = Math.max(1, Math.ceil(chars.length / cols));
-  const canvas = document.createElement('canvas');
-  canvas.width = cols * cell;
-  canvas.height = rows * cell;
-  const ctx = canvas.getContext('2d');
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `${Math.round(cell * 0.74)}px "Segoe UI Symbol", "DejaVu Sans", serif`;
-  ctx.lineJoin = 'round';
-
-  const index = new Map();
-  chars.forEach((char, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const white = char === char.toUpperCase();
-    ctx.lineWidth = cell * 0.07;
-    ctx.strokeStyle = white ? '#354537' : '#e0e5d4';
-    ctx.fillStyle = white ? '#fffdf6' : '#26362c';
-    const x = (col + 0.5) * cell;
-    const y = (row + 0.55) * cell;
-    ctx.strokeText(glyphFor(char), x, y);
-    ctx.fillText(glyphFor(char), x, y);
-    index.set(char, [col, row]);
-  });
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.flipY = false;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = 4;
-  texture.needsUpdate = true;
-  return { texture, cols, rows, index };
-}
 
 export function createSpatialView(pos, onSelect, glyphFor) {
   const is4D = pos.dims === 4;

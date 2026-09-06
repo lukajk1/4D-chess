@@ -323,3 +323,25 @@ dialog::backdrop { background: #0007; }
 .cube-canvas:active { cursor: grabbing; }
 .cube-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 850px) { .cube-canvas { height: auto; aspect-ratio: 1; } }
+
+/* 4D page: master tesseract, then its eight component cubes, then slices. */
+.cube-explorer-4d { display: flex; flex-direction: column; gap: 28px; }
+.cube-explorer-4d .cube-view { position: static; }
+.cube-explorer-4d .explorer-slices { border-top: 1px solid var(--line); padding-top: 22px; }
+.cube-explorer-4d .slices { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.cube-grid-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.cube-grid-panel .hint { margin: 10px 0 0; }
+
+/* The canvas covers the whole grid; each cell supplies one scissored
+   viewport, so eight cubes cost one WebGL context between them. */
+.cube-grid { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.cube-cell { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 10px; border-left: 3px solid var(--w-color); transition: border-color .15s, background .15s; }
+.cube-cell.active { border-color: var(--selected); background: color-mix(in srgb, var(--selected) 9%, transparent); }
+.cube-cell-label { position: absolute; top: 7px; left: 10px; z-index: 2; pointer-events: none; color: var(--muted); font: 11px ui-monospace, monospace; }
+.cube-cell.active .cube-cell-label { color: var(--ink); }
+.cube-grid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; touch-action: none; cursor: grab; }
+.cube-grid-canvas:active { cursor: grabbing; }
+.reset-grid { font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 900px) { .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cube-explorer-4d .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

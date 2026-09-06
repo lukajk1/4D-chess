@@ -3,6 +3,7 @@ import { toFen, moveToText, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
+import { createCubeGrid } from './cube-grid.js';
 
 const els = {
   variant: document.querySelector('#variant'),
@@ -33,6 +34,7 @@ let explorer = null;
 function refreshExplorer(pos) {
   if (explorer?.position !== pos) {
     explorer?.viewer.destroy();
+    explorer?.cubeGrid?.destroy();
     const slices = document.createElement('div');
     slices.className = 'explorer-slices';
     let cubeSelect = null;
@@ -55,10 +57,19 @@ function refreshExplorer(pos) {
     cubeSelect?.addEventListener('change', () => { showCube(Number(cubeSelect.value)); });
     const viewer = createSpatialView(pos, onSquare, glyphFor);
     const layout = document.createElement('div');
-    layout.className = 'cube-explorer';
-    layout.append(slices, viewer.element);
+    let cubeGrid = null;
+    if (pos.dims === 4) {
+      // Master tesseract first, then the eight cubes it decomposes into,
+      // then the flat slices of whichever cube is selected.
+      cubeGrid = createCubeGrid(pos, onSquare, glyphFor);
+      layout.className = 'cube-explorer-4d';
+      layout.append(viewer.element, cubeGrid.element, slices);
+    } else {
+      layout.className = 'cube-explorer';
+      layout.append(slices, viewer.element);
+    }
     els.boardArea.replaceChildren(layout);
-    explorer = { position: pos, viewer, slices, cubeSelect, showCube };
+    explorer = { position: pos, viewer, cubeGrid, slices, cubeSelect, showCube };
   }
   if (state.selected !== null && explorer.cubeSelect) {
     const w = pos.coord(state.selected)[3];
@@ -70,6 +81,7 @@ function refreshExplorer(pos) {
     cell.setAttribute('aria-pressed', String(selected));
   }
   explorer.viewer.update(state.selected);
+  explorer.cubeGrid?.update(state.selected);
   els.status.textContent = `${pos.dims}D position explorer`;
   els.blurb.textContent = VARIANTS[state.variantId].blurb;
   els.reset.textContent = 'Reset position';
