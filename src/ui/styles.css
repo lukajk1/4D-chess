@@ -81,6 +81,7 @@
   overflow: hidden;
   pointer-events: none;
 }
+.axis-label-layer:not(.ready) { visibility: hidden; }
 .axis-label {
   position: absolute;
   transform: translate(-50%, -50%);

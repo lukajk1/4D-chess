@@ -62,6 +62,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
+      ${segmented('Space style', 'Space style', [['squares', 'Squares'], ['verts', 'Points']], 'squares')}
       ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
@@ -78,7 +79,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   canvas.className = 'cube-canvas';
   canvas.tabIndex = 0;
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, click a piece or an empty point to inspect.`);
+  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, and click a piece or space.`);
   root.append(canvas);
 
   // Floats over the canvas rather than sitting under it, centred along the
@@ -170,6 +171,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const pointAlpha = new Float32Array(slotCount).fill(1);
   const pointSize = new Float32Array(slotCount);
   const baseAlpha = new Float32Array(slotCount).fill(1);
+  const tileAlpha = new Float32Array(slotCount);
+  const tileScale = new Float32Array(slotCount).fill(1);
   const scratch = new THREE.Color();
 
   // Three colourings, switchable at runtime: chessboard parity, one colour per
@@ -421,6 +424,68 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   faintCloud.renderOrder = 2;
   scene.add(faintCloud);
 
+  // A square is centred on each lattice point rather than filling the gap
+  // between four points. That deliberately leaves a half-square overhang at
+  // the board edges. The tiles stay horizontal at each point's world height.
+  const tileGeometry = new THREE.InstancedBufferGeometry();
+  tileGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
+  ]), 3));
+  tileGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+  tileGeometry.instanceCount = slotCount;
+  tileGeometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(positions, 3));
+  tileGeometry.setAttribute('aScale', new THREE.InstancedBufferAttribute(tileScale, 1));
+  tileGeometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(pointColors, 3));
+  tileGeometry.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(tileAlpha, 1));
+  const tileMaterial = new THREE.ShaderMaterial({
+    vertexShader: `
+      attribute vec3 aCenter;
+      attribute float aScale;
+      attribute vec3 aColor;
+      attribute float aAlpha;
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        vColor = aColor;
+        vAlpha = aAlpha;
+        vec3 at = aCenter + position * aScale;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(at, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.001) discard;
+        gl_FragColor = vec4(vColor, vAlpha * 0.28);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const tileMesh = new THREE.Mesh(tileGeometry, tileMaterial);
+  tileMesh.frustumCulled = false;
+  tileMesh.renderOrder = 1;
+  tileMesh.visible = false;
+  scene.add(tileMesh);
+
+  // Picking uses its own full-space surfaces. It does not depend on whether a
+  // point sprite or a square happens to represent that space visually.
+  const spaceHitPositions = new Float32Array(slotCount * 4 * 3);
+  const spaceHitIndices = new Uint32Array(slotCount * 6);
+  for (let s = 0; s < slotCount; s++) {
+    const v = s * 4;
+    spaceHitIndices.set([v, v + 1, v + 2, v, v + 2, v + 3], s * 6);
+  }
+  const spaceHitGeometry = new THREE.BufferGeometry();
+  spaceHitGeometry.setAttribute('position', new THREE.BufferAttribute(spaceHitPositions, 3));
+  spaceHitGeometry.setIndex(new THREE.BufferAttribute(spaceHitIndices, 1));
+  const spaceHitMaterial = new THREE.MeshBasicMaterial({
+    side: THREE.DoubleSide, colorWrite: false, depthWrite: false,
+  });
+  const spaceHitMesh = new THREE.Mesh(spaceHitGeometry, spaceHitMaterial);
+  spaceHitMesh.renderOrder = -1;
+  scene.add(spaceHitMesh);
+
   // ---- wire edges, described as index pairs then filled each rebuild
   const edgePairs = [];
   const [maxX, maxY, maxZ] = pos.shape.map((n) => n - 1);
@@ -468,15 +533,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let cellFrameGeometry = null;
   const cellFramePositions = new Float32Array(is4D ? cells.length * CORNER_EDGES.length * 3 : 0);
   if (is4D) {
+    const frameColor = new THREE.Color(theme.muted).lerp(new THREE.Color('#ffffff'), 0.24);
     cellFrameGeometry = new THREE.BufferGeometry();
     cellFrameGeometry.setAttribute('position', new THREE.BufferAttribute(cellFramePositions, 3));
-    cellFrameGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(cellFramePositions.length / 3).fill(0.32), 1));
+    cellFrameGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(cellFramePositions.length / 3).fill(0.32 * 1.24), 1));
     netFrameMaterial = new THREE.ShaderMaterial({
       vertexShader: LINE_VERTEX,
       fragmentShader: LINE_FRAGMENT,
       transparent: true,
       depthWrite: false,
-      uniforms: { uColor: { value: new THREE.Color(theme.muted) }, uFade: { value: 1 } },
+      uniforms: { uColor: { value: frameColor }, uFade: { value: 1 } },
     });
     const cellFrame = new THREE.LineSegments(cellFrameGeometry, netFrameMaterial);
     cellFrame.frustumCulled = false;
@@ -668,7 +734,21 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
   const markers = new THREE.Points(markerGeometry, markerMaterial);
 
-  for (const object of [highlightWire, highlightFill, markers]) {
+  // Square mode uses the footprint itself as the move marker. One non-indexed
+  // line loop per visible clone keeps the outline cheap and easy to rewrite as
+  // cells separate during unfolding.
+  const SQUARE_OUTLINE_MAX = HIGHLIGHT_MAX * (is4D ? 8 : 1);
+  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 8 * 3);
+  const squareOutlineGeometry = new THREE.BufferGeometry();
+  squareOutlineGeometry.setAttribute('position', new THREE.BufferAttribute(squareOutlinePositions, 3));
+  squareOutlineGeometry.setDrawRange(0, 0);
+  const squareOutlineColor = new THREE.Color(theme.accent).lerp(new THREE.Color('#e8fff0'), 0.45);
+  const squareOutlineMaterial = new THREE.LineBasicMaterial({
+    color: squareOutlineColor, transparent: true, opacity: 0.92, depthWrite: false,
+  });
+  const squareOutlines = new THREE.LineSegments(squareOutlineGeometry, squareOutlineMaterial);
+
+  for (const object of [highlightWire, highlightFill, markers, squareOutlines]) {
     object.frustumCulled = false;
     object.renderOrder = 3;
     object.visible = false;
@@ -684,6 +764,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let unfoldT = 0;
   let unfoldTarget = 0;
   let colourMode = 'board';
+  let latticeMode = 'squares';
   let layer = null;
   let selected = null;
   let showAxisLabels = true;
@@ -746,6 +827,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       }
     }
     pointGeometry.attributes.aColor.needsUpdate = true;
+    tileGeometry.attributes.aColor.needsUpdate = true;
   }
 
   function writeCellFrame(K, g, shift) {
@@ -879,9 +961,22 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       positions[s * 3 + 2] = proj[2] - shift[2];
       // Nearer the 4D camera reads larger, exactly as the lattice spacing does.
       pointSize[s] = basePointSize * ws * g * (is4D && ci < 0 ? 0.62 : 1);
+      tileScale[s] = ws * g;
+      const half = tileScale[s] / 2;
+      const hit = s * 12;
+      spaceHitPositions.set([
+        positions[s * 3] - half, positions[s * 3 + 1], positions[s * 3 + 2] - half,
+        positions[s * 3] + half, positions[s * 3 + 1], positions[s * 3 + 2] - half,
+        positions[s * 3] + half, positions[s * 3 + 1], positions[s * 3 + 2] + half,
+        positions[s * 3] - half, positions[s * 3 + 1], positions[s * 3 + 2] + half,
+      ], hit);
     }
     pointGeometry.attributes.position.needsUpdate = true;
     pointGeometry.attributes.aSize.needsUpdate = true;
+    tileGeometry.attributes.aCenter.needsUpdate = true;
+    tileGeometry.attributes.aScale.needsUpdate = true;
+    spaceHitGeometry.attributes.position.needsUpdate = true;
+    spaceHitGeometry.computeBoundingSphere();
     pointGeometry.computeBoundingSphere();
     applyColors();
     if (is4D && pieceMesh) {
@@ -900,6 +995,47 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const shownTargets = [];
 
   function writeHighlights() {
+    const squareMode = latticeMode === 'squares' && reachMode === 'points';
+    if (squareMode) {
+      highlightWire.visible = false;
+      highlightFill.visible = false;
+      markers.visible = false;
+      const targetSet = new Set(targets);
+      let n = 0;
+      for (let s = 0; s < slotCount && n < SQUARE_OUTLINE_MAX; s++) {
+        if (!targetSet.has(slotLattice[s]) || !visible(s)) continue;
+        if (is4D && !slots[s].cell && unfoldT >= 0.45) continue;
+        const home = homeSlotOf[slotLattice[s]];
+        if (is4D && s !== home) {
+          const h = home * 3;
+          const apart = Math.hypot(
+            positions[s * 3] - positions[h],
+            positions[s * 3 + 1] - positions[h + 1],
+            positions[s * 3 + 2] - positions[h + 2],
+          );
+          if (apart < 0.06) continue;
+        }
+        const x = positions[s * 3];
+        const y = positions[s * 3 + 1] + 0.008;
+        const z = positions[s * 3 + 2];
+        const half = tileScale[s] / 2;
+        const corners = [
+          [x - half, y, z - half], [x + half, y, z - half],
+          [x + half, y, z + half], [x - half, y, z + half],
+        ];
+        const edgeOrder = [0, 1, 1, 2, 2, 3, 3, 0];
+        for (let k = 0; k < edgeOrder.length; k++) {
+          squareOutlinePositions.set(corners[edgeOrder[k]], (n * 8 + k) * 3);
+        }
+        n++;
+      }
+      squareOutlineGeometry.setDrawRange(0, n * 8);
+      squareOutlineGeometry.attributes.position.needsUpdate = true;
+      squareOutlineGeometry.computeBoundingSphere();
+      squareOutlines.visible = n > 0;
+      return;
+    }
+    squareOutlines.visible = false;
     // A target in a hidden layer or a filtered-out cell is not shown, whichever
     // reading is on, so the two always agree on what is being pointed at.
     shownTargets.length = 0;
@@ -992,13 +1128,27 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     for (let s = 0; s < slotCount; s++) {
       // Points on no cell have nowhere to unfold to, so they fade away.
       const fade = is4D && !slots[s].cell ? 1 - Math.min(1, t / 0.5) : 1;
+      const base = (visible(s) ? baseAlpha[s] : 0.06) * fade;
+      const home = homeSlotOf[slotLattice[s]];
+      let cloneFade = 1;
+      if (is4D && s !== home) {
+        const h = home * 3;
+        cloneFade = Math.min(1, Math.hypot(
+          positions[s * 3] - positions[h],
+          positions[s * 3 + 1] - positions[h + 1],
+          positions[s * 3 + 2] - positions[h + 2],
+        ) / 0.6);
+      }
+      tileAlpha[s] = base * cloneFade;
       // A point sprite and a model anchored at the same coordinate intersect
       // ambiguously because the sprite only has one flat depth value. The
       // model carries the occupied-square marker itself, so suppress that
       // sphere while retaining the point in the raycast geometry.
-      pointAlpha[s] = hasVisibleModelAt(s) ? 0 : (visible(s) ? baseAlpha[s] : 0.06) * fade;
+      pointAlpha[s] = latticeMode === 'verts' && !hasVisibleModelAt(s) ? base : 0;
     }
     pointGeometry.attributes.aAlpha.needsUpdate = true;
+    tileGeometry.attributes.aAlpha.needsUpdate = true;
+    tileMesh.visible = latticeMode === 'squares';
 
     edgePairs.forEach((edge, i) => {
       // The tesseract frame stays whole; only the 3D board grids answer to
@@ -1064,6 +1214,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       label.element.style.left = `${x - layerRect.left + dx / length * offset}px`;
       label.element.style.top = `${y - layerRect.top + dy / length * offset}px`;
     }
+    axisLabelLayer.classList.add('ready');
   }
 
   const observer = new ResizeObserver(resize);
@@ -1092,7 +1243,6 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   // ---- picking
   const raycaster = new THREE.Raycaster();
-  raycaster.params.Points.threshold = is4D ? 0.16 : 0.2;
   const pointer = new THREE.Vector2();
   let down = null;
 
@@ -1113,20 +1263,30 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     // fixed-radius sphere at its foot. The point under a piece is no longer a
     // target of its own; it only becomes one again in glyph mode, or with the
     // pieces hidden, where pickTargets is empty.
-    let best = null;
-    const closer = (distance, slot) => {
-      if (best && distance >= best.distance) return;
-      best = { distance, lattice: slotLattice[slot] };
+    let bestPiece = null;
+    let bestTarget = null;
+    let bestSpace = null;
+    const closer = (current, distance, slot) => {
+      if (current && distance >= current.distance) return current;
+      return { distance, lattice: slotLattice[slot] };
     };
     for (const { mesh, slots } of modelPieces.pickTargets()) {
       for (const hit of raycaster.intersectObject(mesh, false)) {
         const slot = pieceInstances[slots[hit.instanceId]].slot;
-        if (visible(slot)) closer(hit.distance, slot);
+        if (visible(slot)) bestPiece = closer(bestPiece, hit.distance, slot);
       }
     }
-    for (const hit of raycaster.intersectObject(pointCloud, false)) {
-      if (visible(hit.index) && pointAlpha[hit.index] > 0.1) closer(hit.distance, hit.index);
+    const spaceHits = raycaster.intersectObject(spaceHitMesh, false);
+    for (const hit of spaceHits) {
+      const slot = Math.floor(hit.faceIndex / 2);
+      if (!visible(slot) || tileAlpha[slot] <= 0.1) continue;
+      if (selected !== null && targets.includes(slotLattice[slot])) {
+        bestTarget = closer(bestTarget, hit.distance, slot);
+      } else {
+        bestSpace = closer(bestSpace, hit.distance, slot);
+      }
     }
+    const best = bestTarget ?? bestPiece ?? bestSpace;
     if (best) onSelect(best.lattice);
   });
 
@@ -1172,6 +1332,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     colourMode = value;
     applyColors();
     needsRender = true;
+  });
+  onSegment('Space style', (value) => {
+    latticeMode = value;
+    applyFilters();
   });
   onSegment('Axis labels', (value) => {
     showAxisLabels = value === 'on';
@@ -1354,7 +1518,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   setCamera('perspective');
   reportZoom();
   syncFoldUI();
-  tick();
+  // The caller restores the previous camera and fold state immediately after
+  // creation. Starting on the next frame avoids briefly rendering defaults.
+  frame = requestAnimationFrame(tick);
 
   return {
     element: root,
@@ -1368,6 +1534,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         showPieces,
         reachMode,
         colourMode,
+        latticeMode,
         showAxisLabels,
         wMode,
         wSpread,
@@ -1415,6 +1582,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
           btn.setAttribute('aria-pressed', String(btn.dataset.value === colourMode));
         });
         applyColors();
+      }
+      if (state.latticeMode !== undefined && state.latticeMode !== latticeMode) {
+        latticeMode = state.latticeMode;
+        root.querySelectorAll('[aria-label="Space style"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === latticeMode));
+        });
       }
       if (state.showAxisLabels !== undefined && state.showAxisLabels !== showAxisLabels) {
         showAxisLabels = state.showAxisLabels;
@@ -1497,15 +1670,21 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       observer.disconnect();
       controls.dispose();
       pointGeometry.dispose();
+      tileGeometry.dispose();
+      spaceHitGeometry.dispose();
       edgeGeometry.dispose();
       haloGeometry.dispose();
       highlightGeometry.dispose();
       highlightFillGeometry.dispose();
+      squareOutlineGeometry.dispose();
       markerGeometry.dispose();
       markerMaterial.dispose();
       highlightMaterial.dispose();
       highlightFillMaterial.dispose();
+      squareOutlineMaterial.dispose();
       pointMaterial.dispose();
+      tileMaterial.dispose();
+      spaceHitMaterial.dispose();
       edgeMaterial.dispose();
       halo.material.dispose();
       pieceMesh?.geometry.dispose();
