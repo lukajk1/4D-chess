@@ -60,8 +60,6 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
-      ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
-      ${pieceCount ? segmented('Pieces', 'Piece rendering', [['meshes', '3D'], ['glyphs', 'Glyphs']], 'meshes') : ''}
       ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
       ${is4D ? `<div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
@@ -69,7 +67,6 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       </div>
       <button class="unfold">Unfold</button>
       <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Start 4D rotation</button>` : ''}
-      <output class="zoom-level" aria-label="Zoom level">100%</output>
     </div>`;
 
   const canvas = document.createElement('canvas');
@@ -107,7 +104,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       into the public domain, via OpenGameArt. Credit is not required; this is here anyway.</p>
     <form method="dialog"><button>Close</button></form>`;
   creditLink.addEventListener('click', () => creditDialog.showModal());
-  root.append(caption, creditDialog);
+  root.append(caption, creditLink, creditDialog);
 
   // ---- three.js scene
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -507,7 +504,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   const modelStatus = document.createElement('output');
   modelStatus.setAttribute('aria-live', 'polite');
-  root.querySelector('.cube-controls').append(modelStatus, creditLink);
+  root.querySelector('.cube-controls').append(modelStatus);
   const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
     modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
     applyFilters();
@@ -1006,6 +1003,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   const zoomOutput = root.querySelector('.zoom-level');
   function reportZoom() {
+    if (!zoomOutput) return;
     const ratio = camera.isOrthographicCamera
       ? camera.zoom
       : distance / camera.position.distanceTo(controls.target);

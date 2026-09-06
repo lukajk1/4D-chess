@@ -69,7 +69,7 @@
 .cube-caption {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
   z-index: 2; pointer-events: none;
-  margin: 0; max-width: calc(100% - 32px); text-align: center;
+  margin: 0; max-width: calc(100% - 240px); text-align: center;
   font: 12px/1.5 ui-monospace, monospace;
   /* Reads over the lattice without a panel behind it. */
   text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
@@ -303,14 +303,20 @@ dialog {
 }
 dialog::backdrop { background: #0007; }
 .credit-link {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 5;
   min-height: 0;
   border: 0;
   padding: 0;
   background: none;
-  color: inherit;
-  font: inherit;
+  color: var(--muted);
+  font: 12px/1.5 system-ui, -apple-system, sans-serif;
   text-decoration: underline;
   text-underline-offset: 2px;
+  cursor: pointer;
+  text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
 }
 .credit-link:hover { color: var(--accent); }
 .asset-credit { width: min(420px, calc(100vw - 32px)); line-height: 1.6; }

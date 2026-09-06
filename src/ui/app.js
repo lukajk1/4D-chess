@@ -4,7 +4,6 @@ import { toFen, moveToText, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
-import { createCubeGrid } from './cube-grid.js';
 
 const els = {
   variant: document.querySelector('#variant'),
@@ -79,13 +78,13 @@ function refreshExplorer(pos, lastMove = null) {
     // in one dimension live in their own modules and are simply absent from
     // the list for the others, so this table is the only place the shell has
     // to know about dimension at all.
-    const defs = [];
-    if (pos.dims === 4) defs.push({ id: 'cells', label: 'Cells', make: () => createCubeGrid(pos, onSquare, glyphFor) });
-    defs.push({ id: 'slices', label: 'Slices', make: () => buildSlices(pos) });
+    const defs = [
+      { id: 'slices', label: 'Slices', make: () => buildSlices(pos) },
+    ];
 
     const toolbar = document.createElement('div');
     toolbar.className = 'explorer-toolbar';
-    const open = new Set(prevOpen ?? []);
+    const open = new Set((prevOpen ?? []).filter((id) => defs.some((d) => d.id === id)));
     const built = new Map();
 
     const sync = () => {
