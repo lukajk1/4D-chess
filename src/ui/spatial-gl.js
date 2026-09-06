@@ -54,7 +54,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
       </div>
-      <button class="unfold">Unfold</button>` : ''}
+      <button class="unfold">Unfold</button>
+      <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Start 4D rotation</button>` : ''}
       <output class="zoom-level" aria-label="Zoom level">100%</output>
     </div>`;
 
@@ -221,12 +222,34 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const cameraK = (t) => K_FOLDED + (K_UNFOLDED - K_FOLDED) * smooth(clamp01(t / 0.25));
   const wScaleAt = (w, K) => (is4D ? K / (K - (w - center[3]) / (center[3] || 1)) : 1);
 
+  // A coordinate axis belongs to three independent planes in 4D. Rotating in
+  // all three planes containing z gives the point cloud a true 4D motion: XZ
+  // and YZ turn its spatial silhouette while ZW changes apparent 4D depth.
+  const zPlanes = [[0, 2], [1, 2], [2, 3]];
+  const rotationAngles = new Float64Array(3);
+  const rotationSpeeds = [.11, -.083, .14];
+  const rotated4 = [0, 0, 0, 0];
+  function rotateThroughZPlanes(c) {
+    for (let axis = 0; axis < 4; axis++) rotated4[axis] = c[axis] - center[axis];
+    zPlanes.forEach(([a, b], i) => {
+      const cos = Math.cos(rotationAngles[i]);
+      const sin = Math.sin(rotationAngles[i]);
+      const va = rotated4[a];
+      const vb = rotated4[b];
+      rotated4[a] = va * cos - vb * sin;
+      rotated4[b] = va * sin + vb * cos;
+    });
+    for (let axis = 0; axis < 4; axis++) rotated4[axis] += center[axis];
+    return rotated4;
+  }
+
   // Project a 4D point for a given camera, scale and spacing. Returns wScale.
   function projectAt(c, K, g, sp, out) {
-    const ws = wScaleAt(c[3], K);
-    out[0] = (c[0] - center[0]) * ws * g;
-    out[1] = (c[2] - center[2]) * sp * ws * g;
-    out[2] = -(c[1] - center[1]) * ws * g;
+    const q = is4D ? rotateThroughZPlanes(c) : c;
+    const ws = wScaleAt(q[3], K);
+    out[0] = (q[0] - center[0]) * ws * g;
+    out[1] = (q[2] - center[2]) * sp * ws * g;
+    out[2] = -(q[1] - center[1]) * ws * g;
     return ws;
   }
 
@@ -471,6 +494,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   let selected = null;
   let showPieces = true;
   let pieceMode = 'meshes';
+  let rotationRunning = false;
   let disposed = false;
   let needsRender = true;
 
@@ -766,6 +790,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const unfoldButton = root.querySelector('.unfold');
   const foldSlider = root.querySelector('.fold-slider');
   const foldValue = root.querySelector('.fold-value');
+  const rotationButton = root.querySelector('.rotation-toggle');
 
   function syncFoldUI() {
     if (foldSlider) foldSlider.value = String(unfoldT);
@@ -782,6 +807,13 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   unfoldButton?.addEventListener('click', () => {
     unfoldTarget = unfoldT >= 0.5 ? 0 : 1;
     syncFoldUI();
+  });
+
+  rotationButton?.addEventListener('click', () => {
+    rotationRunning = !rotationRunning;
+    rotationButton.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
+    rotationButton.setAttribute('aria-pressed', String(rotationRunning));
+    needsRender = true;
   });
 
   foldSlider?.addEventListener('input', () => {
@@ -809,18 +841,31 @@ export function createSpatialView(pos, onSelect, glyphFor) {
 
   // ---- loop: damping needs continuous updates, but rendering is conditional
   let frame = 0;
-  function tick() {
+  let lastTick = performance.now();
+  function tick(now = performance.now()) {
     if (disposed) return;
     frame = requestAnimationFrame(tick);
+    const elapsed = Math.min(.05, Math.max(0, (now - lastTick) / 1000));
+    lastTick = now;
+    let positionsChanged = false;
     if (unfoldT !== unfoldTarget) {
       // Around 3.3s end to end, long enough to read each stage.
       const stepSize = 1 / 200;
       unfoldT = unfoldTarget > unfoldT
         ? Math.min(unfoldTarget, unfoldT + stepSize)
         : Math.max(unfoldTarget, unfoldT - stepSize);
+      syncFoldUI();
+      positionsChanged = true;
+    }
+    if (rotationRunning) {
+      for (let i = 0; i < rotationAngles.length; i++) {
+        rotationAngles[i] = (rotationAngles[i] + rotationSpeeds[i] * elapsed) % (Math.PI * 2);
+      }
+      positionsChanged = true;
+    }
+    if (positionsChanged) {
       writeSlotPositions();
       applyFilters();
-      syncFoldUI();
     }
     if (controls.update() || needsRender) {
       renderer.render(scene, camera);
