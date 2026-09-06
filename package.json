@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/core.test.js"
+    "test": "node --test test/core.test.js",
+    "vendor": "node scripts/vendor-three.js"
   },
   "dependencies": {
     "three": "^0.185.1"

@@ -9,10 +9,33 @@ dependencies at all; the spatial viewer uses three.js, loaded through an import
 map rather than a bundler.
 
 ```bash
-npm install # three.js, for the 3D/4D viewer only
 npm start   # serves http://localhost:5173
 npm test    # move generator test suite
 ```
+
+## Deploying
+
+There is no build step and nothing to install. Every file the browser needs is
+committed, so the repository *is* the deployable site — copy it to any static
+host and open `index.html`:
+
+```bash
+# GitHub Pages, Netlify, S3, nginx, python -m http.server ... all work as-is
+```
+
+Two things make that true, and both are easy to break:
+
+- **three.js is vendored**, not pulled from `node_modules` (which is
+  git-ignored) or a CDN. Only three files are needed — see
+  `scripts/vendor-three.js`, and re-run `npm run vendor` after upgrading three.
+  `three.module.min.js` imports `./three.core.min.js` as a sibling, so those two
+  must stay side by side.
+- **The import map uses relative paths.** Absolute ones would 404 on any host
+  that serves the site from a subpath, which includes GitHub Pages project
+  sites at `user.github.io/repo/`.
+
+`npm install` is only needed to re-vendor three or to work on the dependency
+itself; `server.js` is a convenience for local development, not a requirement.
 
 ## The idea
 
