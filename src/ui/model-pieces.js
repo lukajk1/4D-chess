@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { mergeVertices, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
 // Original king is 8.96 units high. One shared scale preserves the set's proportions.
@@ -12,9 +12,6 @@ const OUTLINE_MAX = 8;
 // MODEL_SCALE, so a fixed offset here is a fixed width for pawn and king alike
 // -- which growing the hull by a percentage would not give.
 const OUTLINE_WIDTH = .34;
-// Smooth the lathed and rounded surfaces while preserving deliberate corners
-// such as base rims, rook crenellations, and the king's cross.
-const CREASE_ANGLE = THREE.MathUtils.degToRad(85);
 
 // An inverted hull: the same mesh grown along its normals, back faces only, so
 // the piece itself covers all of it but the rim. Cheaper than a postprocessing
@@ -68,11 +65,9 @@ function loadPieceGeometry(type) {
     const source = meshes[0];
     gltf.scene.updateMatrixWorld(true);
     source.geometry.applyMatrix4(source.matrixWorld);
-    const geometry = toCreasedNormals(source.geometry, CREASE_ANGLE);
-    if (geometry !== source.geometry) source.geometry.dispose();
     (Array.isArray(source.material) ? source.material : [source.material]).forEach(m => m.dispose());
-    const hull = hullOf(geometry);
-    const entry = { geometry, hull };
+    const hull = hullOf(source.geometry);
+    const entry = { geometry: source.geometry, hull };
     geometryCache.set(type, entry);
     return entry;
   })();

@@ -2,6 +2,8 @@ import { WHITE, BLACK, colorOf, typeOf, opposite, withColor, toCoord, toIndex, s
 import { vectorsFor, modeOf } from './pieces.js';
 
 export const forwardAxisOf = (pos) => pos.variant?.forwardAxis ?? (pos.dims >= 2 ? 1 : 0);
+export const forwardDirectionOf = (pos, color) => pos.variant?.forwardDirection?.[color]
+  ?? (color === WHITE ? 1 : -1);
 const promotionsOf = (pos) => pos.variant?.promotions ?? ['q', 'r', 'b', 'n'];
 
 function slide(pos, from, vectors, out, color) {
@@ -55,11 +57,11 @@ function pawnCaptureVectors(dims, axis, direction) {
 
 function pawnMoves(pos, from, color, out) {
   const axis = forwardAxisOf(pos);
-  const direction = color === WHITE ? 1 : -1;
+  const direction = forwardDirectionOf(pos, color);
   const coord = toCoord(pos.shape, from);
-  const lastRank = color === WHITE ? pos.shape[axis] - 1 : 0;
+  const lastRank = direction > 0 ? pos.shape[axis] - 1 : 0;
   const startRank = pos.variant?.pawnRank?.[color]
-    ?? (color === WHITE ? 1 : pos.shape[axis] - 2);
+    ?? (direction > 0 ? 1 : pos.shape[axis] - 2);
 
   const forward = new Array(pos.dims).fill(0);
   forward[axis] = direction;
@@ -113,7 +115,7 @@ export function envelope(pos, from, { ignoreOccupancy = false } = {}) {
   const reached = new Set();
   if (type === 'p') {
     const axis = forwardAxisOf(pos);
-    const direction = color === WHITE ? 1 : -1;
+    const direction = forwardDirectionOf(pos, color);
     const forward = new Array(pos.dims).fill(0);
     forward[axis] = direction;
 
@@ -203,7 +205,7 @@ export function isAttacked(pos, index, byColor) {
 
     if (type === 'p') {
       const axis = forwardAxisOf(pos);
-      const direction = byColor === WHITE ? 1 : -1;
+      const direction = forwardDirectionOf(pos, byColor);
       for (const vector of pawnCaptureVectors(pos.dims, axis, direction)) {
         if (step(pos.shape, coord, vector) === index) return true;
       }
@@ -251,7 +253,7 @@ export function makeMove(pos, move) {
   next.set(move.from, null);
   if (move.ep) {
     const captureCoord = toCoord(pos.shape, move.to);
-    captureCoord[forwardAxisOf(pos)] -= color === WHITE ? 1 : -1;
+    captureCoord[forwardAxisOf(pos)] -= forwardDirectionOf(pos, color);
     next.set(toIndex(pos.shape, captureCoord), null);
   }
   next.set(move.to, move.promotion ? withColor(move.promotion, color) : move.piece);

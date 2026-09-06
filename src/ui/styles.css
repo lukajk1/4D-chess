@@ -447,6 +447,9 @@ dialog::backdrop { background: #0007; }
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent;
 }
+.explorer-brand { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 22px; }
+.explorer-brand strong { font-size: clamp(26px, 2.1vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
+.explorer-brand a { margin-top: 4px; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .explorer-controls::-webkit-scrollbar { width: 8px; }
 .explorer-controls::-webkit-scrollbar-track { background: transparent; }
 .explorer-controls::-webkit-scrollbar-thumb {
@@ -480,6 +483,33 @@ dialog::backdrop { background: #0007; }
 
 /* Containing block for anything the main view pins over its canvas. */
 .explorer-main { position: relative; }
+.explorer-move-display {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 203px;
+  padding: 11px 15px;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(7px);
+  pointer-events: none;
+}
+.explorer-turn { display: flex; align-items: center; gap: 9px; font-size: 18px; }
+.explorer-turn::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
+  border-radius: 50%;
+  background: #fffdf6;
+}
+.explorer-turn[data-turn="b"]::before { background: #2a2f27; }
+.explorer-last-move { color: var(--muted); font: 15px/1.4 ui-monospace, 'Cascadia Mono', monospace; }
 
 /* Segmented controls: both options visible, one click to switch. */
 .control { display: flex; flex-direction: column; gap: 5px; }
@@ -505,6 +535,9 @@ dialog::backdrop { background: #0007; }
 .fold-value, .rotation-value { font: 11px ui-monospace, monospace; color: var(--ink); }
 .control-label { display: flex; align-items: baseline; gap: 6px; }
 .fold-slider, .rotation-slider { width: 100%; padding: 0; accent-color: var(--accent); }
+.rotation-input-row { display: flex; align-items: center; gap: 8px; }
+.explorer-controls .rotation-input-row .rotation-slider { flex: 1; width: auto; min-width: 0; }
+.plane-rotation-toggle { flex: 0 0 58px; min-height: 30px; padding: 4px 8px; font-size: 11px; }
 
 /* The column rule stacks label above control, which is wrong for a checkbox
    and its text. Needs the element qualifier to outrank `> label`, and an

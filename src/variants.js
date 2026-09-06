@@ -54,16 +54,16 @@ function hypercubeVariant(n) {
   // A 4-wide cube has no room for pawns along y, so layoutArmies leaves them
   // off and they go in along w instead, where there is room.
   const pawnsAlongW = n < 6;
-  // The 3D game pulled apart along w: white's half lives in the interior cube
-  // (w = 1) and black's in the outer cube (w = n), facing each other across the
-  // fourth axis with open board between.
+  // The 3D game pulled apart along w: black occupies w = 1 and white occupies
+  // w = n. The nested projection enlarges the high-w side, so the first-moving
+  // white army also receives the visually easier targets.
   const royalLayers = layoutArmies(n, (x, y, z, piece) => {
     const white = piece === piece.toUpperCase();
     // layoutArmies mirrors black across y so the two sides face along y. Here
     // they face along w instead, so undo that mirror: both armies share one
     // (x, y, z) footprint and differ only in w, putting the entire separation
     // on the single axis being pulled apart -- as e1 and e8 share a file.
-    pos.set(pos.index([x, white ? y : n - 1 - y, z, white ? 0 : n - 1]), piece);
+    pos.set(pos.index([x, white ? y : n - 1 - y, z, white ? n - 1 : 0]), piece);
   });
 
   // Both back ranks sit in the y = 0 plane, so the pawns are a plane too: the
@@ -76,8 +76,8 @@ function hypercubeVariant(n) {
   if (pawnsAlongW) {
     for (let x = 0; x < n; x++) {
       for (let z = 0; z < n; z++) {
-        pos.set(pos.index([x, 0, z, 1]), 'P');
-        pos.set(pos.index([x, 0, z, n - 2]), 'p');
+        pos.set(pos.index([x, 0, z, n - 2]), 'P');
+        pos.set(pos.index([x, 0, z, 1]), 'p');
       }
     }
   }
@@ -90,7 +90,11 @@ function hypercubeVariant(n) {
     inspectionOnly: true,
     // Those pawns advance along w, so w is the forward axis. The 8-wide board
     // keeps the y-facing pawns layoutArmies gives it, and the axis-1 default.
-    ...(pawnsAlongW && { forwardAxis: 3 }),
+    ...(pawnsAlongW && {
+      forwardAxis: 3,
+      forwardDirection: { w: -1, b: 1 },
+      pawnRank: { w: n - 2, b: 1 },
+    }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
     start: toFen(pos),

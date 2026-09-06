@@ -61,9 +61,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
+      ${is4D ? segmented('Cell shape', 'Cell shape', [['tall', 'Tall'], ['cube', 'Cube'], ['even', 'Even height']], 'tall') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
-      ${segmented('Space style', 'Space style', [['squares', 'Squares'], ['opaque', 'Opaque'], ['verts', 'Points']], 'squares')}
+      ${segmented('Space style', 'Space style', [['opaque', 'Opaque'], ['squares', 'Translucent'], ['verts', 'Points']], 'opaque')}
       ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
+      ${segmented('Square notation', 'Square notation', [['on', 'On'], ['off', 'Off']], 'off')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
       ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
@@ -74,9 +76,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       <button class="unfold">Unfold</button>
       ${['XZ', 'YZ', 'ZW'].map((plane, i) => `<div class="control">
         <span class="control-label">${plane} rotation <output class="rotation-value" data-plane="${i}">0°</output></span>
-        <input class="rotation-slider" data-plane="${i}" aria-label="${plane} rotation" type="range" min="0" max="1" step="0.001" value="0">
+        <div class="rotation-input-row">
+          <input class="rotation-slider" data-plane="${i}" aria-label="${plane} rotation" type="range" min="0" max="1" step="0.001" value="0">
+          <button class="plane-rotation-toggle" data-plane="${i}" type="button" aria-pressed="false">Play</button>
+        </div>
       </div>`).join('')}
-      <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Start 4D rotation</button>` : ''}
+      <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Play 4D rotation</button>
+      <button class="reset-rotations" type="button">Reset all rotations</button>` : ''}
     </div>`;
 
   const canvas = document.createElement('canvas');
@@ -265,11 +271,14 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // step -- so this is a factor rather than a distance, and up means further
   // apart in both.
   let wSpread = 1;
+  let cellShape = 'tall';
+  const spacingForCellShape = (shape) => shape === 'tall' ? 1.35 : shape === 'even' ? 2.2 : 1;
+  let spacing = 1.35;
 
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
   const TAU = Math.PI * 2;
   const rotationAngles = new Float64Array(3);
-  const rotationSpeeds = [.11, -.083, .14];
+  const rotationSpeeds = [.1496, -.11288, .1904];
   const rotated4 = [0, 0, 0, 0];
   function rotateThroughZPlanes(c) {
     for (let axis = 0; axis < 4; axis++) rotated4[axis] = c[axis] - center[axis];
@@ -307,7 +316,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
     const ws = wScaleAt(q[3], K);
     out[0] = (q[0] - center[0]) * ws * g;
-    out[1] = (q[2] - center[2]) * sp * ws * g;
+    // Even-height cells assign every (z, w) board a distinct, regular height:
+    // z chooses the major level and w subdivides the interval to the next z.
+    // This keeps all n*n planes separate without stretching the full stack by n.
+    const verticalCoordinate = cellShape === 'even'
+      ? (q[2] - center[2]) + (q[3] - center[3]) / pos.shape[3]
+      : (q[2] - center[2]) * ws;
+    out[1] = verticalCoordinate * sp * g;
     out[2] = -(q[1] - center[1]) * ws * g;
     return ws;
   }
@@ -389,7 +404,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     const hi = [-Infinity, -Infinity, -Infinity];
     cornerCoords.forEach((corners, ci) => {
       for (const c of corners) {
-        projectAt(unfoldCoord(c, ci, hinges, full, coord4), K_UNFOLDED, 1, 1, proj);
+        projectAt(unfoldCoord(c, ci, hinges, full, coord4), K_UNFOLDED, 1, spacing, proj);
         for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], proj[k]); hi[k] = Math.max(hi[k], proj[k]); }
       }
     });
@@ -508,6 +523,120 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   tileMesh.renderOrder = 1;
   tileMesh.visible = false;
   scene.add(tileMesh);
+
+  // Render notation from one small character atlas and one instanced batch.
+  // A whole-label texture per square would become enormous on the 8^4 board;
+  // repeated glyphs keep the texture and draw-call cost effectively constant.
+  const notationNames = Array.from({ length: count }, (_, i) => squareName(pos.shape, i));
+  const notationChars = [...new Set(notationNames.join(''))];
+  const notationCell = 64;
+  const notationCols = Math.max(1, Math.ceil(Math.sqrt(notationChars.length)));
+  const notationRows = Math.max(1, Math.ceil(notationChars.length / notationCols));
+  const notationCanvas = document.createElement('canvas');
+  notationCanvas.width = notationCols * notationCell;
+  notationCanvas.height = notationRows * notationCell;
+  const notationContext = notationCanvas.getContext('2d');
+  notationContext.textAlign = 'center';
+  notationContext.textBaseline = 'middle';
+  notationContext.font = `600 ${Math.round(notationCell * .62)}px ui-monospace, "Cascadia Mono", monospace`;
+  notationContext.lineJoin = 'round';
+  notationContext.lineWidth = 7;
+  const notationAtlasCells = new Map();
+  notationChars.forEach((char, i) => {
+    const col = i % notationCols;
+    const row = Math.floor(i / notationCols);
+    const x = (col + .5) * notationCell;
+    const y = (row + .52) * notationCell;
+    notationContext.strokeStyle = 'rgba(248, 246, 238, .9)';
+    notationContext.fillStyle = '#17201b';
+    notationContext.strokeText(char, x, y);
+    notationContext.fillText(char, x, y);
+    notationAtlasCells.set(char, [col, row]);
+  });
+  const notationTexture = new THREE.CanvasTexture(notationCanvas);
+  notationTexture.flipY = false;
+  notationTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  notationTexture.magFilter = THREE.LinearFilter;
+  notationTexture.anisotropy = 4;
+
+  const notationGlyphs = [];
+  slots.forEach((slot, s) => {
+    const name = notationNames[slot.lattice];
+    for (let i = 0; i < name.length; i++) {
+      notationGlyphs.push({ slot: s, char: name[i], offset: i - (name.length - 1) / 2 });
+    }
+  });
+  const notationCount = notationGlyphs.length;
+  const notationCenters = new Float32Array(notationCount * 3);
+  const notationScales = new Float32Array(notationCount);
+  const notationOffsets = new Float32Array(notationCount);
+  const notationCells = new Float32Array(notationCount * 2);
+  const notationAlpha = new Float32Array(notationCount);
+  notationGlyphs.forEach((glyph, i) => {
+    notationOffsets[i] = glyph.offset;
+    notationCells.set(notationAtlasCells.get(glyph.char), i * 2);
+  });
+
+  const notationGeometry = new THREE.InstancedBufferGeometry();
+  notationGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -.5, -.5, 0, .5, -.5, 0, .5, .5, 0, -.5, .5, 0,
+  ]), 3));
+  notationGeometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
+  notationGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+  notationGeometry.instanceCount = notationCount;
+  notationGeometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(notationCenters, 3));
+  notationGeometry.setAttribute('aScale', new THREE.InstancedBufferAttribute(notationScales, 1));
+  notationGeometry.setAttribute('aOffset', new THREE.InstancedBufferAttribute(notationOffsets, 1));
+  notationGeometry.setAttribute('aCell', new THREE.InstancedBufferAttribute(notationCells, 2));
+  notationGeometry.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(notationAlpha, 1));
+  const notationMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uAtlas: { value: notationTexture },
+      uGrid: { value: new THREE.Vector2(notationCols, notationRows) },
+      uGlyphSize: { value: new THREE.Vector2(.105, .17) },
+    },
+    vertexShader: `
+      attribute vec3 aCenter;
+      attribute float aScale;
+      attribute float aOffset;
+      attribute vec2 aCell;
+      attribute float aAlpha;
+      uniform vec2 uGlyphSize;
+      varying vec2 vUv;
+      varying vec2 vCell;
+      varying float vAlpha;
+      void main() {
+        vUv = uv;
+        vCell = aCell;
+        vAlpha = aAlpha;
+        vec3 at = aCenter + vec3(
+          (aOffset + position.x) * uGlyphSize.x * aScale,
+          .018,
+          -position.y * uGlyphSize.y * aScale
+        );
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(at, 1.0);
+      }`,
+    fragmentShader: `
+      uniform sampler2D uAtlas;
+      uniform vec2 uGrid;
+      varying vec2 vUv;
+      varying vec2 vCell;
+      varying float vAlpha;
+      void main() {
+        vec2 atlasUv = (vCell + vec2(vUv.x, 1.0 - vUv.y)) / uGrid;
+        vec4 texel = texture2D(uAtlas, atlasUv);
+        if (texel.a < .08 || vAlpha <= .001) discard;
+        gl_FragColor = vec4(texel.rgb, texel.a * vAlpha * .82);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+  const notationMesh = new THREE.Mesh(notationGeometry, notationMaterial);
+  notationMesh.frustumCulled = false;
+  notationMesh.renderOrder = 2;
+  notationMesh.visible = false;
+  scene.add(notationMesh);
 
   // Picking uses its own full-space surfaces. It does not depend on whether a
   // point sprite or a square happens to represent that space visually.
@@ -775,19 +904,24 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
   const markers = new THREE.Points(markerGeometry, markerMaterial);
 
-  // Square mode uses the footprint itself as the move marker. One non-indexed
-  // line loop per visible clone keeps the outline cheap and easy to rewrite as
-  // cells separate during unfolding.
+  // Square mode uses four narrow quads around the footprint as its move
+  // marker. Native WebGL lines are fixed at one pixel on most browsers, while
+  // these strips retain a visibly heavier width at every camera angle.
   const SQUARE_OUTLINE_MAX = HIGHLIGHT_MAX * (is4D ? 8 : 1);
-  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 8 * 3);
+  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 16 * 3);
+  const squareOutlineIndices = new Uint32Array(SQUARE_OUTLINE_MAX * 24);
+  for (let i = 0; i < SQUARE_OUTLINE_MAX * 4; i++) {
+    const v = i * 4;
+    squareOutlineIndices.set([v, v + 1, v + 2, v, v + 2, v + 3], i * 6);
+  }
   const squareOutlineGeometry = new THREE.BufferGeometry();
   squareOutlineGeometry.setAttribute('position', new THREE.BufferAttribute(squareOutlinePositions, 3));
+  squareOutlineGeometry.setIndex(new THREE.BufferAttribute(squareOutlineIndices, 1));
   squareOutlineGeometry.setDrawRange(0, 0);
-  const squareOutlineColor = new THREE.Color(theme.accent).lerp(new THREE.Color('#e8fff0'), 0.45);
-  const squareOutlineMaterial = new THREE.LineBasicMaterial({
-    color: squareOutlineColor, transparent: true, opacity: 0.92, depthWrite: false,
+  const squareOutlineMaterial = new THREE.MeshBasicMaterial({
+    color: '#9dffb8', transparent: true, opacity: 1, depthWrite: false, side: THREE.DoubleSide,
   });
-  const squareOutlines = new THREE.LineSegments(squareOutlineGeometry, squareOutlineMaterial);
+  const squareOutlines = new THREE.Mesh(squareOutlineGeometry, squareOutlineMaterial);
 
   for (const object of [highlightWire, highlightFill, markers, squareOutlines]) {
     object.frustumCulled = false;
@@ -797,21 +931,19 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   }
 
   // ---- state
-  // Layer spacing lost its slider but not its wiring: projectAt and
-  // rebuildFolded still scale z by it, so putting a control back is one line.
-  let spacing = 1;
   let targets = [];
   let reachMode = 'points';
   let unfoldT = 0;
   let unfoldTarget = 0;
   let colourMode = 'board';
-  let latticeMode = 'squares';
+  let latticeMode = 'opaque';
   let layer = null;
   let selected = null;
   let showAxisLabels = true;
+  let showSquareNotation = false;
   let showPieces = true;
   let pieceMode = 'meshes';
-  let rotationRunning = false;
+  const rotationPlaying = [false, false, false];
   let disposed = false;
   let needsRender = true;
 
@@ -823,7 +955,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       const c = coords[i];
       const wScale = wScaleOf(c);
       latticeFolded[i * 3] = (c[0] - center[0]) * wScale;
-      latticeFolded[i * 3 + 1] = (c[2] - center[2]) * spacing * wScale;
+      const verticalCoordinate = cellShape === 'even'
+        ? (c[2] - center[2]) + (c[3] - center[3]) / pos.shape[3]
+        : (c[2] - center[2]) * wScale;
+      latticeFolded[i * 3 + 1] = verticalCoordinate * spacing;
       latticeFolded[i * 3 + 2] = -(c[1] - center[1]) * wScale;
     }
   }
@@ -980,6 +1115,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     syncModelPieces();
   }
 
+  function writeNotationPositions() {
+    if (!showSquareNotation) return;
+    notationGlyphs.forEach((glyph, i) => {
+      notationCenters.set(positions.subarray(glyph.slot * 3, glyph.slot * 3 + 3), i * 3);
+      notationScales[i] = tileScale[glyph.slot];
+    });
+    notationGeometry.attributes.aCenter.needsUpdate = true;
+    notationGeometry.attributes.aScale.needsUpdate = true;
+  }
+
   function writeSlotPositions() {
     const t = unfoldT;
     const K = cameraK(t);
@@ -1012,6 +1157,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         positions[s * 3] - half, positions[s * 3 + 1], positions[s * 3 + 2] + half,
       ], hit);
     }
+    writeNotationPositions();
     pointGeometry.attributes.position.needsUpdate = true;
     pointGeometry.attributes.aSize.needsUpdate = true;
     tileGeometry.attributes.aCenter.needsUpdate = true;
@@ -1057,20 +1203,26 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
           if (apart < 0.06) continue;
         }
         const x = positions[s * 3];
-        const y = positions[s * 3 + 1] + 0.008;
+        const y = positions[s * 3 + 1] + 0.012;
         const z = positions[s * 3 + 2];
         const half = tileScale[s] / 2;
-        const corners = [
-          [x - half, y, z - half], [x + half, y, z - half],
-          [x + half, y, z + half], [x - half, y, z + half],
+        const thickness = tileScale[s] * .05;
+        const outer = half + thickness * .15;
+        const inner = half - thickness;
+        const quads = [
+          [[x - outer, y, z - outer], [x + outer, y, z - outer], [x + outer, y, z - inner], [x - outer, y, z - inner]],
+          [[x + inner, y, z - inner], [x + outer, y, z - inner], [x + outer, y, z + inner], [x + inner, y, z + inner]],
+          [[x - outer, y, z + inner], [x + outer, y, z + inner], [x + outer, y, z + outer], [x - outer, y, z + outer]],
+          [[x - outer, y, z - inner], [x - inner, y, z - inner], [x - inner, y, z + inner], [x - outer, y, z + inner]],
         ];
-        const edgeOrder = [0, 1, 1, 2, 2, 3, 3, 0];
-        for (let k = 0; k < edgeOrder.length; k++) {
-          squareOutlinePositions.set(corners[edgeOrder[k]], (n * 8 + k) * 3);
+        for (let q = 0; q < quads.length; q++) {
+          for (let k = 0; k < 4; k++) {
+            squareOutlinePositions.set(quads[q][k], (n * 16 + q * 4 + k) * 3);
+          }
         }
         n++;
       }
-      squareOutlineGeometry.setDrawRange(0, n * 8);
+      squareOutlineGeometry.setDrawRange(0, n * 24);
       squareOutlineGeometry.attributes.position.needsUpdate = true;
       squareOutlineGeometry.computeBoundingSphere();
       squareOutlines.visible = n > 0;
@@ -1189,6 +1341,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
     pointGeometry.attributes.aAlpha.needsUpdate = true;
     tileGeometry.attributes.aAlpha.needsUpdate = true;
+    if (showSquareNotation) {
+      notationGlyphs.forEach((glyph, i) => { notationAlpha[i] = tileAlpha[glyph.slot]; });
+      notationGeometry.attributes.aAlpha.needsUpdate = true;
+    }
+    notationMesh.visible = showSquareNotation;
     const squareMode = latticeMode !== 'verts';
     const opaqueSquares = latticeMode === 'opaque';
     tileMesh.visible = squareMode;
@@ -1374,6 +1531,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     measureNet();
     rebuildPositions();
   });
+  onSegment('Cell shape', (value) => {
+    cellShape = value;
+    spacing = spacingForCellShape(cellShape);
+    measureNet();
+    rebuildPositions();
+  });
   onSegment('Move highlight', (value) => {
     reachMode = value;
     writeHighlights();
@@ -1398,6 +1561,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     showAxisLabels = value === 'on';
     axisLabelLayer.hidden = !showAxisLabels;
     needsRender = true;
+  });
+  onSegment('Square notation', (value) => {
+    showSquareNotation = value === 'on';
+    writeNotationPositions();
+    applyFilters();
   });
   // Background is the scene clear, not a canvas style. Leaving it null keeps
   // the canvas transparent so the page shows through, which is what the viewer
@@ -1451,8 +1619,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const foldSlider = root.querySelector('.fold-slider');
   const foldValue = root.querySelector('.fold-value');
   const rotationButton = root.querySelector('.rotation-toggle');
+  const resetRotationsButton = root.querySelector('.reset-rotations');
   const rotationSliders = Array.from(root.querySelectorAll('.rotation-slider'));
   const rotationValues = Array.from(root.querySelectorAll('.rotation-value'));
+  const planeRotationButtons = Array.from(root.querySelectorAll('.plane-rotation-toggle'));
 
   function syncFoldUI() {
     if (foldSlider) foldSlider.value = String(unfoldT);
@@ -1466,10 +1636,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     }
   }
 
-  function syncRotationButton() {
-    if (!rotationButton) return;
-    rotationButton.textContent = rotationRunning ? 'Stop 4D rotation' : 'Start 4D rotation';
-    rotationButton.setAttribute('aria-pressed', String(rotationRunning));
+  function syncRotationButtons() {
+    planeRotationButtons.forEach((button, i) => {
+      button.textContent = rotationPlaying[i] ? 'Pause' : 'Play';
+      button.setAttribute('aria-pressed', String(rotationPlaying[i]));
+    });
+    if (rotationButton) {
+      const playing = rotationPlaying.some(Boolean);
+      rotationButton.textContent = playing ? 'Pause 4D rotation' : 'Play 4D rotation';
+      rotationButton.setAttribute('aria-pressed', String(playing));
+    }
   }
 
   function syncRotationUI() {
@@ -1483,10 +1659,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     });
   }
 
-  function stopRotation() {
-    if (!rotationRunning) return;
-    rotationRunning = false;
-    syncRotationButton();
+  function stopRotation(i) {
+    if (!rotationPlaying[i]) return;
+    rotationPlaying[i] = false;
+    syncRotationButtons();
   }
 
   unfoldButton?.addEventListener('click', () => {
@@ -1495,19 +1671,37 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
 
   rotationButton?.addEventListener('click', () => {
-    rotationRunning = !rotationRunning;
-    syncRotationButton();
+    const playAll = !rotationPlaying.some(Boolean);
+    rotationPlaying.fill(playAll);
+    syncRotationButtons();
     needsRender = true;
   });
 
+  resetRotationsButton?.addEventListener('click', () => {
+    rotationPlaying.fill(false);
+    rotationAngles.fill(0);
+    syncRotationButtons();
+    syncRotationUI();
+    writeSlotPositions();
+    applyFilters();
+  });
+
   rotationSliders.forEach((slider, i) => {
-    slider.addEventListener('pointerdown', stopRotation);
+    slider.addEventListener('pointerdown', () => stopRotation(i));
     slider.addEventListener('input', () => {
-      stopRotation();
+      stopRotation(i);
       rotationAngles[i] = Number(slider.value) * TAU;
       writeSlotPositions();
       applyFilters();
       syncRotationUI();
+    });
+  });
+
+  planeRotationButtons.forEach((button, i) => {
+    button.addEventListener('click', () => {
+      rotationPlaying[i] = !rotationPlaying[i];
+      syncRotationButtons();
+      needsRender = true;
     });
   });
 
@@ -1587,8 +1781,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       syncFoldUI();
       positionsChanged = true;
     }
-    if (rotationRunning) {
+    if (rotationPlaying.some(Boolean)) {
       for (let i = 0; i < rotationAngles.length; i++) {
+        if (!rotationPlaying[i]) continue;
         rotationAngles[i] = (rotationAngles[i] + rotationSpeeds[i] * elapsed + TAU) % TAU;
       }
       syncRotationUI();
@@ -1619,6 +1814,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   reportZoom();
   syncFoldUI();
   syncRotationUI();
+  syncRotationButtons();
   // The caller restores the previous camera and fold state immediately after
   // creation. Starting on the next frame avoids briefly rendering defaults.
   frame = requestAnimationFrame(tick);
@@ -1637,11 +1833,15 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         colourMode,
         latticeMode,
         showAxisLabels,
+        showSquareNotation,
         wMode,
         wSpread,
+        cellShape,
+        spacing,
         unfoldT,
         unfoldTarget,
-        rotationRunning,
+        rotationRunning: rotationPlaying.some(Boolean),
+        rotationPlaying: Array.from(rotationPlaying),
         rotationAngles: Array.from(rotationAngles),
         layer,
         background,
@@ -1697,6 +1897,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
           btn.setAttribute('aria-pressed', String((btn.dataset.value === 'on') === showAxisLabels));
         });
       }
+      if (state.showSquareNotation !== undefined && state.showSquareNotation !== showSquareNotation) {
+        showSquareNotation = state.showSquareNotation;
+        root.querySelectorAll('[aria-label="Square notation"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String((btn.dataset.value === 'on') === showSquareNotation));
+        });
+      }
       if (state.wMode !== undefined && state.wMode !== wMode) {
         wMode = state.wMode;
         root.querySelectorAll('[aria-label="Hyperprojection"] button').forEach((btn) => {
@@ -1711,14 +1917,35 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         measureNet();
         needsRebuild = true;
       }
+      if (state.cellShape !== undefined && state.cellShape !== cellShape) {
+        cellShape = state.cellShape;
+        spacing = spacingForCellShape(cellShape);
+        root.querySelectorAll('[aria-label="Cell shape"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === cellShape));
+        });
+        measureNet();
+        needsRebuild = true;
+      } else if (state.cellShape === undefined && state.spacing !== undefined && state.spacing !== spacing) {
+        // Camera state from before the preset had its own key.
+        spacing = state.spacing;
+        cellShape = spacing > 1 ? 'tall' : 'cube';
+        root.querySelectorAll('[aria-label="Cell shape"] button').forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.value === cellShape));
+        });
+        measureNet();
+        needsRebuild = true;
+      }
       if (state.unfoldT !== undefined) {
         unfoldT = state.unfoldT;
         unfoldTarget = state.unfoldTarget ?? state.unfoldT;
         syncFoldUI();
       }
-      if (state.rotationRunning !== undefined && state.rotationRunning !== rotationRunning) {
-        rotationRunning = state.rotationRunning;
-        syncRotationButton();
+      if (Array.isArray(state.rotationPlaying)) {
+        for (let i = 0; i < rotationPlaying.length; i++) rotationPlaying[i] = Boolean(state.rotationPlaying[i]);
+        syncRotationButtons();
+      } else if (state.rotationRunning !== undefined) {
+        rotationPlaying.fill(Boolean(state.rotationRunning));
+        syncRotationButtons();
       }
       if (state.rotationAngles && rotationAngles) {
         for (let i = 0; i < rotationAngles.length; i++) {
@@ -1772,6 +1999,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       controls.dispose();
       pointGeometry.dispose();
       tileGeometry.dispose();
+      notationGeometry.dispose();
       spaceHitGeometry.dispose();
       edgeGeometry.dispose();
       haloGeometry.dispose();
@@ -1785,6 +2013,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       squareOutlineMaterial.dispose();
       pointMaterial.dispose();
       tileMaterial.dispose();
+      notationMaterial.dispose();
+      notationTexture.dispose();
       spaceHitMaterial.dispose();
       edgeMaterial.dispose();
       halo.material.dispose();

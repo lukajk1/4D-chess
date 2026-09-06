@@ -1,6 +1,6 @@
-import { legalMoves, makeMove, status, inCheck, envelope, forwardAxisOf } from '../core/movegen.js';
+import { legalMoves, makeMove, status, inCheck, envelope, forwardAxisOf, forwardDirectionOf } from '../core/movegen.js';
 import { colorOf, typeOf, toCoord } from '../core/position.js';
-import { toFen, moveToText, squareName } from '../core/notation.js';
+import { toFen, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
@@ -29,6 +29,15 @@ const state = {
 };
 
 let explorer = null;
+
+function displayMove(shape, move) {
+  if (move.castle) return 'Castle';
+  const from = squareName(shape, move.from);
+  const to = squareName(shape, move.to);
+  const separator = move.captured || move.ep ? 'x' : '–';
+  const promotion = move.promotion ? `=${move.promotion.toUpperCase()}` : '';
+  return `${from}${separator}${to}${promotion}`;
+}
 
 // The flat slice boards, wrapped in the same { element, update, destroy }
 // shape the spatial views use so the shell can dock any of them alike.
@@ -65,13 +74,32 @@ function refreshExplorer(pos, lastMove = null) {
     shell.className = 'explorer-shell';
     const main = document.createElement('div');
     main.className = 'explorer-main';
-    main.append(viewer.element);
+    const moveDisplay = document.createElement('section');
+    moveDisplay.className = 'explorer-move-display';
+    moveDisplay.setAttribute('role', 'status');
+    moveDisplay.setAttribute('aria-live', 'polite');
+    const turn = document.createElement('strong');
+    turn.className = 'explorer-turn';
+    turn.dataset.turn = pos.turn;
+    turn.textContent = `${pos.turn === 'w' ? 'White' : 'Black'} to move`;
+    const last = document.createElement('span');
+    last.className = 'explorer-last-move';
+    const previous = state.history.at(-1);
+    last.textContent = previous
+      ? `Last: ${colorOf(previous.move.piece) === 'w' ? 'White' : 'Black'} ${displayMove(previous.position.shape, previous.move)}`
+      : 'Last: —';
+    moveDisplay.append(turn, last);
+    main.append(viewer.element, moveDisplay);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
     // Controls dock on the left, optional views on the right, canvas between.
     const controlsPanel = document.createElement('aside');
     controlsPanel.className = 'explorer-controls';
+    const brand = document.createElement('header');
+    brand.className = 'explorer-brand';
+    brand.innerHTML = '<strong>4D chess</strong><a role="link" aria-disabled="true">created by lukajk</a>';
+    controlsPanel.append(brand);
     shell.append(controlsPanel, main, side);
 
     // Which auxiliary views this position offers. Views that only make sense
@@ -247,8 +275,7 @@ function renderHistory() {
     const glyph = glyphFor(entry.move.piece);
     row.innerHTML = `<span class="ply">${Math.floor(i / 2) + 1}${i % 2 ? '...' : '.'}</span>`
       + `<span class="glyph">${glyph}</span>`
-      + `<code>${moveToText(entry.position.shape, entry.move)}</code>`
-      + (entry.move.captured ? '<span class="tag">x</span>' : '')
+      + `<code>${displayMove(entry.position.shape, entry.move)}</code>`
       + (entry.move.castle ? '<span class="tag">castle</span>' : '')
       + (entry.move.ep ? '<span class="tag">e.p.</span>' : '');
     els.history.append(row);
@@ -267,7 +294,7 @@ function onSquare(index) {
         const piece = pos.get(state.selected);
         const color = colorOf(piece);
         const axis = forwardAxisOf(pos);
-        const lastRank = color === 'w' ? pos.shape[axis] - 1 : 0;
+        const lastRank = forwardDirectionOf(pos, color) > 0 ? pos.shape[axis] - 1 : 0;
         const isPawnPromotion = typeOf(piece) === 'p' && toCoord(pos.shape, index)[axis] === lastRank;
         const move = {
           from: state.selected,
@@ -276,20 +303,21 @@ function onSquare(index) {
           captured: pos.get(index),
           promotion: isPawnPromotion ? 'q' : null,
         };
-        play(move);
+        submitMove(move);
         return;
       }
     }
 
     const piece = pos.get(index);
-    state.selected = piece !== null && state.selected !== index ? index : null;
+    const owned = piece !== null && colorOf(piece) === pos.turn;
+    state.selected = owned && state.selected !== index ? index : null;
     refreshExplorer(pos);
     return;
   }
 
   if (state.selected !== null) {
     const matching = state.moves.filter((m) => m.from === state.selected && m.to === index);
-    if (matching.length === 1) return play(matching[0]);
+    if (matching.length === 1) return submitMove(matching[0]);
     if (matching.length > 1) return askPromotion(matching);
   }
 
@@ -299,12 +327,31 @@ function onSquare(index) {
   refresh();
 }
 
-function play(move) {
-  state.history.push({ position: state.position, move });
-  state.animatingMove = { from: move.from, to: move.to, piece: move.piece, captured: move.captured };
-  state.position = makeMove(state.position, move);
+// Human controls and computer players submit the same move object here. The
+// controller owns turn order and history; a future AI only has to choose from
+// the current position's moves and call this function.
+export function submitMove(move) {
+  const position = state.position;
+  if (!position || !move) return false;
+  const piece = position.get(move.from);
+  if (piece === null || colorOf(piece) !== position.turn) return false;
+
+  const submitted = {
+    ...move,
+    piece,
+    captured: move.ep ? move.captured : position.get(move.to),
+  };
+  state.history.push({ position, move: submitted });
+  state.animatingMove = {
+    from: submitted.from,
+    to: submitted.to,
+    piece: submitted.piece,
+    captured: submitted.captured,
+  };
+  state.position = makeMove(position, submitted);
   state.selected = null;
   refresh();
+  return true;
 }
 
 function askPromotion(moves) {
@@ -316,7 +363,7 @@ function askPromotion(moves) {
     button.title = move.promotion;
     button.addEventListener('click', () => {
       els.promotion.close();
-      play(move);
+      submitMove(move);
     });
     els.promotionChoices.append(button);
   }
