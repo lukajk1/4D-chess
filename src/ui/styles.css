@@ -481,3 +481,50 @@ dialog::backdrop { background: #0007; }
   width: 16px;
   height: 16px;
 }
+
+/* 1D and 2D fill the window like the explorer does, keeping the DOM board
+   rendering they already have: the square grid for 2D, the point line for 1D. */
+body:not(.inspection) main { max-width: none; }
+body:not(.inspection) .layout { height: calc(100vh - 118px); min-height: 380px; align-items: stretch; }
+body:not(.inspection) .layout > section { display: flex; flex-direction: column; min-height: 0; }
+body:not(.inspection) .layout > aside { overflow-y: auto; overscroll-behavior: contain; }
+body:not(.inspection) #board-area { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+
+/* The wrapper is the square, so .files below lines up with the board. */
+.play-board { display: flex; flex-direction: column; height: 100%; aspect-ratio: 1; max-width: 100%; }
+.play-board .board { flex: 1 1 auto; min-height: 0; width: 100%; }
+/* Rows and columns are already equal fractions of a square, so per-cell
+   aspect-ratio would only fight the grid and overflow it. */
+.play-board .cell { aspect-ratio: auto; }
+.play-board:not(.line) .piece { font-size: clamp(18px, 5.4vh, 72px); }
+
+/* A line is not square: it spans the width instead. */
+.play-board.line { aspect-ratio: auto; height: auto; width: 100%; max-width: 1000px; }
+
+@media (max-width: 820px) {
+  body:not(.inspection) .layout { height: auto; }
+  .play-board { height: auto; width: 100%; }
+}
+
+/* Square the board itself rather than its wrapper. The wrapper also carries
+   the file letters, so squaring it left the board short by that strip and the
+   cells came out 86x83. Sizing the wrapper to fit-content keeps .files aligned
+   to the board's real width. */
+.play-board { width: fit-content; max-width: 100%; margin: 0 auto; aspect-ratio: auto; }
+.play-board:not(.line) .board { aspect-ratio: 1; width: auto; max-width: 100%; }
+.play-board.line { width: 100%; }
+.play-board.line .board { aspect-ratio: auto; width: 100%; flex: none; }
+
+/* Size the board from the smaller of the two axes outright. The previous
+   fit-content wrapper around an aspect-ratio board was circular -- wrapper
+   width depended on the board, whose width depended on its height, which
+   depended on the wrapper -- so the browser fell back to content width. */
+.play-board {
+  width: min(100%, calc(100vh - 200px));
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: auto;
+  margin: 0 auto;
+}
+.play-board:not(.line) .board { width: 100%; height: auto; aspect-ratio: 1; flex: none; max-width: none; }
+.play-board.line { width: 100%; max-width: 1000px; }

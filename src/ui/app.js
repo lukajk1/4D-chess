@@ -183,7 +183,8 @@ function refresh() {
     refreshExplorer(pos);
     return;
   }
-  if (explorer) { explorer.viewer.destroy(); explorer = null; }
+  // The explorer owns several views now, so it tears itself down.
+  if (explorer) { explorer.destroy(); explorer = null; }
   els.reset.textContent = 'New game';
   state.moves = legalMoves(pos);
 
@@ -195,16 +196,19 @@ function refresh() {
   }
 
   const checked = inCheck(pos);
-  els.boardArea.replaceChildren(
-    renderBoard(pos, {
-      selected: state.selected,
-      targets,
-      checkIndex: checked ? pos.kingIndex(pos.turn) : null,
-      lastMove: state.history.at(-1)?.move ?? null,
-      onSquare,
-    }),
-    ...(pos.dims <= 2 ? [renderCoordinates(pos)] : []),
-  );
+  // Wrapped so the wrapper can carry the square: the file letters then match
+  // the board's width rather than the whole centred area.
+  const wrap = document.createElement('div');
+  wrap.className = pos.dims === 1 ? 'play-board line' : 'play-board';
+  wrap.append(renderBoard(pos, {
+    selected: state.selected,
+    targets,
+    checkIndex: checked ? pos.kingIndex(pos.turn) : null,
+    lastMove: state.history.at(-1)?.move ?? null,
+    onSquare,
+  }));
+  if (pos.dims <= 2) wrap.append(renderCoordinates(pos));
+  els.boardArea.replaceChildren(wrap);
 
   const state_ = status(pos);
   els.turn.className = 'turn-token ' + (pos.turn === 'w' ? 'white' : 'black');
