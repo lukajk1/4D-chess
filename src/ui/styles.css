@@ -414,7 +414,26 @@ dialog::backdrop { background: #0007; }
 
 /* Controls dock as a left column, stacked rather than strung across the top,
    which gives the canvas the full width and height between the two asides. */
-.explorer-controls { flex: 0 0 210px; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--line); padding-right: 16px; }
+.explorer-controls {
+  flex: 0 0 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--line);
+  padding-right: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent;
+}
+.explorer-controls::-webkit-scrollbar { width: 8px; }
+.explorer-controls::-webkit-scrollbar-track { background: transparent; }
+.explorer-controls::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 38%, transparent);
+  background-clip: content-box;
+}
+.explorer-controls::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 62%, transparent);
+}
 .explorer-controls .cube-controls { display: flex; flex-direction: column; align-items: stretch; gap: 13px; border-bottom: 0; padding: 0; }
 .explorer-controls .cube-controls > label { flex-direction: column; align-items: stretch; gap: 5px; }
 .explorer-controls .cube-controls select,
@@ -445,6 +464,7 @@ dialog::backdrop { background: #0007; }
 .segmented button { flex: 1; min-height: 30px; padding: 5px 8px; font-size: 12px; border-radius: 0; margin-left: -1px; white-space: nowrap; }
 .segmented button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .segmented button:last-child { border-radius: 0 6px 6px 0; }
+.segmented-three button { padding-inline: 4px; font-size: 11px; }
 .segmented button[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
@@ -563,3 +583,26 @@ body:not(.inspection) .layout { height: calc(100vh - 60px); margin-top: 14px; }
    bottom), which pushed the layout 42px past the viewport and produced a
    scrollbar -- which in turn knocked the centred picker off by half its width. */
 body:not(.inspection) main { padding: 12px 22px 22px; }
+
+/* The spatial explorer is the viewport. Its controls own their padding while
+   the WebGL surface reaches the top, bottom, and right browser edges. The
+   variant picker already floats above the scene, so it needs no reserved row. */
+@media (min-width: 901px) {
+  body.inspection { overflow: hidden; }
+  .inspection main {
+    width: 100vw;
+    height: 100vh;
+    padding: 0;
+  }
+  .inspection .layout,
+  .inspection .layout > section,
+  .inspection #board-area { width: 100%; height: 100%; min-height: 0; }
+  .explorer-shell { height: 100%; min-height: 0; margin: 0; gap: 0; }
+  .explorer-controls { flex-basis: 232px; padding: 16px; }
+  .inspection #variant-dock { left: 232px; }
+  .inspection:has(.explorer-side:not([hidden])) #variant-dock { right: 380px; }
+  .explorer-main,
+  .explorer-main > .cube-view,
+  .explorer-main .cube-canvas { height: 100%; min-height: 0; }
+  .explorer-side { border-left: 1px solid var(--line); padding-left: 16px; }
+}

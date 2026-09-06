@@ -28,12 +28,12 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const pieceCount = pieceIndices.length;
 
   // ---- DOM shell (markup mirrors the previous viewer so styling carries over)
-  // A two-way choice reads better as a segmented control than as a dropdown:
-  // both options stay visible and switching is one click, not two.
+  // Small choices read better as segmented controls than as dropdowns: every
+  // option stays visible and switching is one click, not two.
   const segmented = (label, name, options, current) => `
     <div class="control">
       <span class="control-label">${label}</span>
-      <div class="segmented" role="group" aria-label="${name}">
+      <div class="segmented${options.length > 2 ? ' segmented-three' : ''}" role="group" aria-label="${name}">
         ${options.map(([value, text]) => `<button type="button" data-value="${value}" aria-pressed="${value === current}">${text}</button>`).join('')}
       </div>
     </div>`;
@@ -45,9 +45,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     <div class="cube-controls">
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
-      ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
-      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
+      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
@@ -126,7 +125,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // each to its own cell in the net. Strictly interior points get one faint
   // slot and fade out when unfolded, having no cell to travel to.
   const wScaleOf = (c) => (is4D ? 2.5 / (2.5 - (c[3] - center[3]) / (center[3] || 1)) : 1);
-  const basePointSize = is4D ? 0.133 : 0.112;
+  const basePointSize = (is4D ? 0.133 : 0.112) * 0.68;
 
   const slots = [];
   if (is4D) {
@@ -154,11 +153,11 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const baseAlpha = new Float32Array(slotCount).fill(1);
   const scratch = new THREE.Color();
 
-  // Two colourings, switchable at runtime: one colour per cell so the interior
-  // and outer cubes read as whole objects, or the chessboard parity used on
-  // every other board in the app.
+  // Three colourings, switchable at runtime: chessboard parity, one colour per
+  // cell, or a grayscale ramp across the w layers.
   const cellColors = new Float32Array(slotCount * 3);
   const boardColors = new Float32Array(slotCount * 3);
+  const wColors = new Float32Array(slotCount * 3);
   slots.forEach((slot, s) => {
     const c = coords[slot.lattice];
     const parity = c.reduce((a, b) => a + b, 0) % 2;
@@ -167,6 +166,11 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     // In 3D there are no cells, so the brightened board colours stand in.
     if (is4D) scratch.set(slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted);
     cellColors.set([scratch.r, scratch.g, scratch.b], s * 3);
+    // The w coordinate owns this meaning: w = 1 is white and the maximum w
+    // layer is black, independent of how a projection happens to frame them.
+    const wShade = is4D ? 1 - c[3] / Math.max(1, pos.shape[3] - 1) : 0;
+    scratch.setHSL(0, 0, Math.min(1, Math.max(0, wShade)));
+    wColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     const loose = is4D && !slot.cell;
     pointSize[s] = basePointSize * wScaleOf(c) * (loose ? 0.62 : 1);
     baseAlpha[s] = loose ? 0.22 : 1;
@@ -618,7 +622,6 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   let unfoldTarget = 0;
   let colourMode = 'board';
   let layer = null;
-  let cellFilter = null;
   let selected = null;
   let showPieces = true;
   let pieceMode = 'meshes';
@@ -665,6 +668,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   function applyColors() {
     if (colourMode === 'board') {
       pointColors.set(boardColors);
+    } else if (colourMode === 'w') {
+      pointColors.set(wColors);
     } else if (!is4D) {
       pointColors.set(cellColors);
     } else {
@@ -834,8 +839,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // overlap where they share a face, unlike the w shells this replaced.
   const visible = (s) => {
     const c = coords[slotLattice[s]];
-    return (layer === null || c[2] === layer)
-      && (cellFilter === null || slots[s].cell === cellFilter);
+    return layer === null || c[2] === layer;
   };
 
   const hasVisibleModelAt = (s) => {
@@ -995,13 +999,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     needsRender = true;
   });
   const layerSelect = root.querySelector('[aria-label="Visible layer"]');
-  const cellSelect = root.querySelector('[aria-label="Visible cell"]');
   layerSelect?.addEventListener('change', () => {
     layer = layerSelect.value === 'all' ? null : Number(layerSelect.value);
-    applyFilters();
-  });
-  cellSelect?.addEventListener('change', () => {
-    cellFilter = cellSelect.value === 'all' ? null : cells[Number(cellSelect.value)];
     applyFilters();
   });
   onSegment('Point colouring', (value) => {
@@ -1151,18 +1150,6 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       selected = index;
       if (selected !== null) {
         if (layer !== null && layerSelect) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
-        if (cellFilter !== null && cellSelect) {
-          // Keep the filtered cell if it holds the selection; otherwise follow
-          // the selection to one of its cells, or drop the filter when the
-          // point is interior and belongs to none.
-          const owners = cells.filter((cell) => coords[selected][cell.axis] === cell.at);
-          const next = owners.includes(cellFilter) ? cellFilter : owners[0] ?? null;
-          if (next !== cellFilter) {
-            cellFilter = next;
-            cellSelect.value = next ? String(cells.indexOf(next)) : 'all';
-            applyFilters();
-          }
-        }
       }
       modelPieces.setHighlight(selected);
       // Occupancy is deliberately ignored: rays run to the edge, so this is
