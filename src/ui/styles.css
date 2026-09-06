@@ -296,6 +296,22 @@ dialog {
   padding: 20px;
 }
 dialog::backdrop { background: #0007; }
+.credit-link {
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.credit-link:hover { color: var(--accent); }
+.asset-credit { width: min(420px, calc(100vw - 32px)); line-height: 1.6; }
+.asset-credit h2 { margin: 0 0 12px; font-size: 18px; }
+.asset-credit p { margin: 0; color: var(--muted); }
+.asset-credit a { color: var(--accent); }
+.asset-credit form { display: flex; justify-content: flex-end; margin-top: 18px; }
 #promotion-choices { display: flex; gap: 8px; margin-top: 12px; }
 #promotion-choices button { font-size: 30px; line-height: 1; padding: 8px 12px; }
 

@@ -37,7 +37,7 @@ export function createUnwrapView(pos, onSelect, options = {}) {
   const canvas = document.createElement('canvas');
   canvas.className = 'unwrap-canvas';
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', 'The tesseract unfolded into a three-dimensional net. Drag to orbit, scroll to zoom, click a cell to identify it.');
+  canvas.setAttribute('aria-label', 'The tesseract unfolded into a three-dimensional net. Drag to orbit, right-drag to pan, scroll to zoom, click a cell to identify it.');
   root.append(canvas);
 
   const caption = document.createElement('p');
@@ -106,7 +106,7 @@ export function createUnwrapView(pos, onSelect, options = {}) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
-  controls.enablePan = false;
+  controls.enablePan = true;
   controls.target.copy(center);
   controls.update();
 

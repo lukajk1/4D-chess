@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
+import { createModelPieces } from './model-pieces.js';
 import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, brighten, POINT_VERTEX, POINT_FRAGMENT,
@@ -11,9 +12,8 @@ import {
 // WebGL viewer for the lattice. The 4D -> 3D projection stays here in JS
 // because it is part of the model; three.js only handles 3D -> 2D and raster.
 //
-// Everything the camera touches lives in three buffers -- lattice points, wire
-// edges and billboarded piece glyphs -- so a frame costs three draw calls
-// regardless of whether there are 512 positions or 4,096.
+// Lattice points and wires stay in shared buffers. Pieces can use either the
+// single billboard batch or one instanced model batch per visible piece type.
 
 export function createSpatialView(pos, onSelect, glyphFor) {
   const is4D = pos.dims === 4;
@@ -49,6 +49,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Show pieces</label>' : ''}
+      ${pieceCount ? segmented('Pieces', 'Piece rendering', [['meshes', '3D'], ['glyphs', 'Glyphs']], 'meshes') : ''}
       ${is4D ? `<div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
@@ -61,7 +62,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   canvas.className = 'cube-canvas';
   canvas.tabIndex = 0;
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, scroll to zoom, click a point to inspect.`);
+  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, click a point to inspect.`);
   root.append(canvas);
 
   if (is4D) {
@@ -82,8 +83,25 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   caption.setAttribute('aria-live', 'polite');
   const help = document.createElement('p');
   help.className = 'hint';
-  help.textContent = 'Drag to orbit · Scroll to zoom · Click a point to inspect.';
-  root.append(caption, help);
+  help.textContent = 'Drag to orbit · Right-drag to pan · Scroll to zoom · Click a point to inspect.';
+  const creditLink = document.createElement('button');
+  creditLink.type = 'button';
+  creditLink.className = 'credit-link';
+  creditLink.textContent = '3D model credit';
+  creditLink.setAttribute('aria-haspopup', 'dialog');
+  help.append(' · ', creditLink);
+
+  const creditDialog = document.createElement('dialog');
+  creditDialog.className = 'asset-credit';
+  creditDialog.innerHTML = `
+    <h2>3D model credit</h2>
+    <p><a href="https://poly.pizza/m/bfb3C6hpdi0" target="_blank" rel="noopener"><cite>Chess Set</cite></a>
+      by Pia Leung, licensed under
+      <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="license noopener">CC BY 3.0</a>,
+      via Poly Pizza.</p>
+    <form method="dialog"><button>Close</button></form>`;
+  creditLink.addEventListener('click', () => creditDialog.showModal());
+  root.append(caption, help, creditDialog);
 
   // ---- three.js scene
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -100,7 +118,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
-  controls.enablePan = false;
+  controls.enablePan = true;
   controls.rotateSpeed = 0.9;
   controls.minDistance = radius * 0.6;
   controls.maxDistance = distance * 3;
@@ -413,6 +431,14 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     scene.add(pieceMesh);
   }
 
+  const modelStatus = document.createElement('output');
+  modelStatus.setAttribute('aria-live', 'polite');
+  root.querySelector('.cube-controls').append(modelStatus);
+  const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
+    modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
+    applyFilters();
+  });
+
   // ---- selection halo
   const HALO_MAX = 8;
   const haloGeometry = new THREE.BufferGeometry();
@@ -444,6 +470,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   let cellFilter = null;
   let selected = null;
   let showPieces = true;
+  let pieceMode = 'meshes';
   let disposed = false;
   let needsRender = true;
 
@@ -582,6 +609,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       });
       pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
     }
+    syncModelPieces();
     needsRender = true;
   }
 
@@ -613,11 +641,18 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     if (pieceMesh) {
       // Sprites answer to the same layer and cell filters as their slots.
       pieceInstances.forEach((inst, k) => {
-        pieceHidden[k] = showPieces && visible(inst.slot) ? 0 : 1;
+        const modeled = pieceMode === 'meshes' && modelPieces.has(pos.get(inst.lattice).toLowerCase());
+        pieceHidden[k] = showPieces && visible(inst.slot) && !modeled ? 0 : 1;
       });
       pieceMesh.geometry.attributes.aHidden.needsUpdate = true;
     }
+    syncModelPieces();
     needsRender = true;
+  }
+
+  function syncModelPieces() {
+    modelPieces.update(pieceMode === 'meshes' && showPieces, pieceCenters, pieceScale, pieceAlpha,
+      (inst) => visible(inst.slot));
   }
 
   function resize() {
@@ -762,6 +797,15 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     showPieces = e.target.checked;
     applyFilters();
   });
+  root.querySelectorAll('[aria-label="Piece rendering"] button').forEach((button) => {
+    button.addEventListener('click', () => {
+      pieceMode = button.dataset.value;
+      button.parentElement.querySelectorAll('button').forEach((option) => {
+        option.setAttribute('aria-pressed', String(option === button));
+      });
+      applyFilters();
+    });
+  });
 
   // ---- loop: damping needs continuous updates, but rendering is conditional
   let frame = 0;
@@ -823,6 +867,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     },
     destroy() {
       disposed = true;
+      if (creditDialog.open) creditDialog.close();
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
@@ -835,6 +880,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       pieceMesh?.geometry.dispose();
       pieceMesh?.material.dispose();
       atlas?.texture.dispose();
+      modelPieces.dispose();
       renderer.dispose();
     },
   };

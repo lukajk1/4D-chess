@@ -26,7 +26,7 @@ host and open `index.html`:
 Two things make that true, and both are easy to break:
 
 - **three.js is vendored**, not pulled from `node_modules` (which is
-  git-ignored) or a CDN. Only three files are needed — see
+  git-ignored) or a CDN. The renderer, controls, and GLB loader are included — see
   `scripts/vendor-three.js`, and re-run `npm run vendor` after upgrading three.
   `three.module.min.js` imports `./three.core.min.js` as a sibling, so those two
   must stay side by side.
@@ -167,3 +167,10 @@ The WebGL viewer draws the same scene in 2-3 draw calls:
 
 Pieces are drawn as billboarded quads sampling a glyph atlas built on a canvas,
 so all 232 of them cost one draw call.
+
+The main spatial viewer defaults to 3D pieces and offers a **3D / Glyphs** toggle. 3D mode loads the
+six GLB pieces in `assets/chess/` and instances each type with per-piece colours.
+Models preserve their relative sizes and sit with their bases on lattice points.
+Unfolding ghost copies use translucent instances of the same models; auxiliary
+views retain glyphs. If a model cannot load, its pieces retain their glyphs. The set was extracted from the supplied Pia Leung
+GLB; see `assets/chess/README.md` for provenance and triangle counts.

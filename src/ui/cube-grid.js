@@ -50,7 +50,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
   const canvas = document.createElement('canvas');
   canvas.className = 'cube-grid-canvas';
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', 'The eight cells of the tesseract. Drag to orbit all of them; click a point to inspect it.');
+  canvas.setAttribute('aria-label', 'The eight cells of the tesseract. Drag to orbit, right-drag to pan, and click a point to inspect it.');
   grid.append(canvas);
   root.append(grid);
 
@@ -72,7 +72,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
-  controls.enablePan = false;
+  controls.enablePan = true;
   controls.rotateSpeed = 0.85;
 
   const pointUniforms = { uHalfHeight: { value: 120 }, uPerspective: { value: 0 } };
