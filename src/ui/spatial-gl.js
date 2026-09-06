@@ -23,8 +23,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let animatingMove = lastMove && lastMove.from !== undefined && lastMove.to !== undefined ? {
     from: lastMove.from,
     to: lastMove.to,
+    piece: lastMove.piece,
     startTime: performance.now(),
-    duration: 220,
+    duration: 250,
   } : null;
   let capturedToSpawn = lastMove?.captured && lastMove.to !== undefined ? {
     char: lastMove.captured,
@@ -743,10 +744,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     if (!pieceMesh) return;
 
     let easeT = 1;
+    let arcY = 0;
     if (animatingMove) {
       const elapsed = now - animatingMove.startTime;
       const progress = Math.min(1, Math.max(0, elapsed / animatingMove.duration));
       easeT = progress * progress * (3 - 2 * progress);
+      arcY = Math.sin(Math.PI * progress);
       if (progress >= 1) {
         animatingMove = null;
       }
@@ -766,8 +769,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         const fz = is4D ? positions[fromSlot * 3 + 2] : latticeFolded[animatingMove.from * 3 + 2];
         const fScale = is4D ? pointSize[fromSlot] / basePointSize : 1;
 
+        const dist = Math.hypot(tx - fx, ty - fy, tz - fz);
+        const arcPeak = Math.min(0.65, 0.22 + 0.1 * dist);
+
         tx = fx + (tx - fx) * easeT;
-        ty = fy + (ty - fy) * easeT;
+        ty = fy + (ty - fy) * easeT + arcY * arcPeak;
         tz = fz + (tz - fz) * easeT;
         tScale = fScale + (tScale - fScale) * easeT;
       }
