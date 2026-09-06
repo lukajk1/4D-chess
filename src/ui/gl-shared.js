@@ -93,7 +93,8 @@ export const LINE_VERTEX = `
 export const LINE_FRAGMENT = `
   varying float vAlpha;
   uniform vec3 uColor;
-  void main() { gl_FragColor = vec4(uColor, vAlpha); }`;
+  uniform float uFade;
+  void main() { gl_FragColor = vec4(uColor, vAlpha * uFade); }`;
 
 export const PIECE_VERTEX = `
   attribute vec3 aCenter;

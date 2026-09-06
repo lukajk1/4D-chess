@@ -6,11 +6,35 @@
 // and the six x/y/z cells are the frusta joining them face to face.
 //
 // Cells share the vertices on their common faces, so a point can belong to up
-// to four of them. On an 8^4 lattice: 1,728 points lie in one cell, 864 in two,
-// 192 in three and 16 in four. The 1,296 points whose coordinates are all
-// interior belong to no cell at all.
+// to four of them -- the sixteen four-cell points are the tesseract's corners,
+// and there are sixteen at any board size. Points whose coordinates are all
+// interior belong to no cell at all: (n-2)^4 of them.
 
 const AXES = 'xyzw';
+
+// Where each cell sits in the unfolded net, in units of one cell width.
+// Board x maps to world X, board z to world Y (up), board y to world -Z.
+// The outer cell has no free face left on the centre cube, so it continues
+// the column past the bottom arm -- the standard hypercube net.
+export const PLACEMENT = {
+  wmin: [0, 0, 0],
+  xmin: [-1, 0, 0],
+  xmax: [1, 0, 0],
+  ymin: [0, 0, 1],
+  ymax: [0, 0, -1],
+  zmax: [0, 1, 0],
+  zmin: [0, -1, 0],
+  wmax: [0, -2, 0],
+};
+
+// A cell-local index as its three free-axis coordinates.
+export function localCoordIn(cell, local) {
+  return [
+    local % cell.size[0],
+    Math.floor(local / cell.size[0]) % cell.size[1],
+    Math.floor(local / (cell.size[0] * cell.size[1])) % cell.size[2],
+  ];
+}
 
 export function tesseractCells(shape) {
   const cells = [];
@@ -85,6 +109,14 @@ export function localIndexIn(cell, shape, index) {
     stride *= cell.size[k];
   }
   return local;
+}
+
+// Totals for a lattice of any size: the boundary is everything the eight
+// cells cover between them, the interior everything they miss.
+export function latticeStats(shape) {
+  const total = shape.reduce((a, b) => a * b, 1);
+  const interior = shape.reduce((a, b) => a * Math.max(0, b - 2), 1);
+  return { total, interior, boundary: total - interior };
 }
 
 export const isInterior = (shape, index) => {

@@ -23,7 +23,7 @@ const els = {
 };
 
 const state = {
-  variantId: '3d',
+  variantId: '4d-4',
   position: null,
   history: [],      // { position, move } for undo and the move list
   selected: null,

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
-import { tesseractCells, localIndexIn } from './tesseract.js';
+import { tesseractCells, localIndexIn, latticeStats } from './tesseract.js';
 import {
   CELL_COLORS, readTheme, LINE_VERTEX, LINE_FRAGMENT,
   PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas, makePointCloud,
@@ -19,6 +19,7 @@ import {
 export function createCubeGrid(pos, onSelect, glyphFor) {
   const theme = readTheme();
   const cells = tesseractCells(pos.shape);
+  const stats = latticeStats(pos.shape);
 
   const root = document.createElement('section');
   root.className = 'cube-grid-panel';
@@ -30,7 +31,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       </div>
       <button class="reset-grid">Reset view</button>
     </div>
-    <p class="hint">Each cell pins one axis to its lowest or highest value. <strong>w = 1</strong> is the interior cube and <strong>w = 8</strong> the outer one; the six between them join those two face to face. Cells share the vertices along their common faces, so one point can appear in several cubes.</p>`;
+    <p class="hint">Each cell pins one axis to its lowest or highest value. <strong>w = 1</strong> is the interior cube and <strong>w = ${pos.shape[3]}</strong> the outer one; the six between them join those two face to face. Cells share the vertices along their common faces, so one point can appear in several cubes.</p>`;
 
   const grid = document.createElement('div');
   grid.className = 'cube-grid';
@@ -123,7 +124,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       fragmentShader: LINE_FRAGMENT,
       transparent: true,
       depthWrite: false,
-      uniforms: { uColor: { value: new THREE.Color(CELL_COLORS[cell.id]) } },
+      uniforms: { uColor: { value: new THREE.Color(CELL_COLORS[cell.id]) }, uFade: { value: 1 } },
     });
     scene.add(new THREE.LineSegments(edgeGeometry, edgeMaterial));
 
@@ -273,7 +274,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       }
       const piece = index === null ? null : pos.get(index);
       if (index === null) {
-        caption.textContent = 'Eight cells of 512 positions each; 2,800 distinct points lie on them.';
+        caption.textContent = `Eight cells of ${cells[0].count.toLocaleString()} positions each; ${stats.boundary.toLocaleString()} distinct points lie on them.`;
       } else if (owners === 0) {
         caption.textContent = `${squareName(pos.shape, index)} · interior point — on none of the eight cells.`;
       } else {

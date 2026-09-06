@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { squareName } from '../core/notation.js';
-import { tesseractCells, localIndexIn } from './tesseract.js';
+import { tesseractCells, localIndexIn, PLACEMENT } from './tesseract.js';
 import { CELL_COLORS, readTheme } from './gl-shared.js';
 
 // The tesseract unfolded into 3D: the interior cell sits at the centre and the
@@ -13,23 +13,10 @@ import { CELL_COLORS, readTheme } from './gl-shared.js';
 // Cells are drawn as translucent solids rather than point clouds: at this scale
 // the shape of each cell and how it joins its neighbours is the whole point.
 
-// Board x maps to world X, board z to world Y (up), board y to world -Z, which
-// is the mapping the other two views already use.
-const PLACEMENT = {
-  wmin: [0, 0, 0],
-  xmin: [-1, 0, 0],
-  xmax: [1, 0, 0],
-  ymin: [0, 0, 1],
-  ymax: [0, 0, -1],
-  zmax: [0, 1, 0],
-  zmin: [0, -1, 0],
-  wmax: [0, -2, 0],
-};
-
 export function createUnwrapView(pos, onSelect) {
   const theme = readTheme();
   const cells = tesseractCells(pos.shape);
-  const extent = pos.shape[0] - 1;          // 7 units across an 8-point cell
+  const extent = pos.shape[0] - 1;          // world units across one cell
   const step = extent * 1.04;               // a hair of daylight between cells
 
   const root = document.createElement('section');
@@ -93,7 +80,7 @@ export function createUnwrapView(pos, onSelect) {
 
     // Marks the selected board square inside whichever cells contain it.
     const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.55, 16, 12),
+      new THREE.SphereGeometry(extent * 0.08, 16, 12),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(theme.selected), depthTest: false }),
     );
     marker.renderOrder = 5;

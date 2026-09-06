@@ -1,32 +1,56 @@
 import { fromFen, parseSquare, toFen } from './core/notation.js';
 import { Position } from './core/position.js';
 
-function cubeVariant() {
-  const pos = new Position({ shape: [8, 8, 8] });
-  for (let z = 0; z < 8; z++) {
-    const back = z === 3 || z === 4 ? 'RNBQKBNR' : 'RNB..BNR';
-    for (let x = 0; x < 8; x++) {
+// Back ranks by board width. Kings and queens sit only on the middle layers,
+// so each side fields one of each per cube rather than one per layer.
+const BACK_RANKS = {
+  4: { royal: 'RQKR', plain: 'R..R' },
+  6: { royal: 'RNQKNR', plain: 'RN..NR' },
+  8: { royal: 'RNBQKBNR', plain: 'RNB..BNR' },
+};
+
+const middleLayers = (n) => [Math.floor((n - 1) / 2), Math.ceil((n - 1) / 2)];
+
+function cubeVariant(n) {
+  const pos = new Position({ shape: [n, n, n] });
+  const ranks = BACK_RANKS[n];
+  const royalLayers = middleLayers(n);
+  for (let z = 0; z < n; z++) {
+    const back = royalLayers.includes(z) ? ranks.royal : ranks.plain;
+    for (let x = 0; x < n; x++) {
       if (back[x] !== '.') {
         pos.set(pos.index([x, 0, z]), back[x]);
-        pos.set(pos.index([x, 7, z]), back[x].toLowerCase());
+        pos.set(pos.index([x, n - 1, z]), back[x].toLowerCase());
       }
-      pos.set(pos.index([x, 1, z]), 'P');
-      pos.set(pos.index([x, 6, z]), 'p');
+      // A 4-wide board has no room for pawns without filling every square.
+      if (n >= 6) {
+        pos.set(pos.index([x, 1, z]), 'P');
+        pos.set(pos.index([x, n - 2, z]), 'p');
+      }
     }
   }
   return {
-    id: '3d', name: '3D chess', shape: pos.shape, inspectionOnly: true,
-    blurb: '8 × 8 × 8 · 512 positions · A spatial study',
-    castling: [], start: toFen(pos),
+    id: n === 8 ? '3d' : `3d-${n}`,
+    name: `3D chess (${n}³)`,
+    shape: pos.shape,
+    inspectionOnly: true,
+    royalLayers,
+    blurb: `${n} × ${n} × ${n} · ${(n ** 3).toLocaleString()} positions · A spatial study`,
+    castling: [],
+    start: toFen(pos),
   };
 }
 
-function hypercubeVariant() {
-  const pos = new Position({ shape: [8, 8, 8, 8] });
+function hypercubeVariant(n) {
+  const pos = new Position({ shape: [n, n, n, n] });
   return {
-    id: '4d', name: '4D chess', shape: pos.shape, inspectionOnly: true,
-    blurb: '8 × 8 × 8 × 8 · 4,096 positions · Eight cubes, one lattice',
-    castling: [], start: toFen(pos),
+    id: n === 8 ? '4d' : `4d-${n}`,
+    name: `4D chess (${n}⁴)`,
+    shape: pos.shape,
+    inspectionOnly: true,
+    blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
+    castling: [],
+    start: toFen(pos),
   };
 }
 
@@ -77,8 +101,10 @@ export const VARIANTS = {
     pawnRank: { w: 1, b: 6 },
     start: '8x8 rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
   },
-  '3d': cubeVariant(),
-  '4d': hypercubeVariant(),
+  '3d-4': cubeVariant(4),
+  '3d': cubeVariant(8),
+  '4d-4': hypercubeVariant(4),
+  '4d': hypercubeVariant(8),
 };
 
 export function startPosition(id) {

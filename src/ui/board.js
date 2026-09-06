@@ -37,7 +37,7 @@ function renderSlices(pos, view) {
   const help = document.createElement('p');
   help.className = 'hint';
   help.textContent = pos.variant?.inspectionOnly
-    ? `Eight 8 × 8 slices${pos.dims === 4 ? ' of the selected w cube' : ''} · x runs across, y runs up, z selects the layer. Click any square to locate it in space.`
+    ? `${pos.shape[2]} ${pos.shape[0]} × ${pos.shape[1]} slices${pos.dims === 4 ? ' of the selected w cube' : ''} · x runs across, y runs up, z selects the layer. Click any square to locate it in space.`
     : 'Each slice shows x across and y up. z selects depth'
     + (pos.dims === 4 ? '; w selects the fourth axis.' : '.')
     + ' U = Unicorn (3-axis diagonals)'
@@ -58,7 +58,7 @@ function renderSlices(pos, view) {
       const slice = document.createElement('div');
       slice.className = 'slice';
       const label = document.createElement('h3');
-      label.textContent = pos.variant?.inspectionOnly ? `Layer ${z + 1}${pos.dims === 3 && (z === 3 || z === 4) ? ' · King & queen' : ''}` : `z = ${z + 1}`;
+      label.textContent = pos.variant?.inspectionOnly ? `Layer ${z + 1}${pos.variant?.royalLayers?.includes(z) ? ' · King & queen' : ''}` : `z = ${z + 1}`;
       slice.append(label, renderPlane(pos, view, pos.dims === 4 ? [z, w] : [z]), renderCoordinates(pos));
       slices.append(slice);
     }
