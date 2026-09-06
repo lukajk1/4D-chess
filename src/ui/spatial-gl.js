@@ -452,6 +452,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   let pieceHidden = null;
   let pieceScale = null;
   let pieceAlpha = null;
+  let pieceCapturable = null;
   let atlas = null;
   if (pieceCount) {
     const chars = [...new Set(pieceIndices.map((i) => pos.get(i)))];
@@ -470,6 +471,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     pieceHidden = new Float32Array(instanceCount);
     pieceScale = new Float32Array(instanceCount).fill(1);
     pieceAlpha = new Float32Array(instanceCount).fill(1);
+    pieceCapturable = new Float32Array(instanceCount);
     const atlasCells = new Float32Array(instanceCount * 2);
     pieceInstances.forEach((inst, k) => {
       atlasCells.set(atlas.index.get(pos.get(inst.lattice)), k * 2);
@@ -479,6 +481,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     quad.setAttribute('aHidden', new THREE.InstancedBufferAttribute(pieceHidden, 1));
     quad.setAttribute('aScale', new THREE.InstancedBufferAttribute(pieceScale, 1));
     quad.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(pieceAlpha, 1));
+    quad.setAttribute('aCapturable', new THREE.InstancedBufferAttribute(pieceCapturable, 1));
 
     pieceMesh = new THREE.Mesh(quad, new THREE.ShaderMaterial({
       vertexShader: PIECE_VERTEX,
@@ -716,6 +719,22 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     return homeSlotOf[lattice];
   }
 
+  const capturable = new Set();
+
+  function updateCapturable() {
+    capturable.clear();
+    if (selected !== null) {
+      const piece = pos.get(selected);
+      const myColor = piece ? (piece === piece.toUpperCase() ? 'w' : 'b') : null;
+      for (const target of targets) {
+        const targetPiece = pos.get(target);
+        if (targetPiece && (targetPiece === targetPiece.toUpperCase() ? 'w' : 'b') !== myColor) {
+          capturable.add(target);
+        }
+      }
+    }
+  }
+
   function updatePiecePositions(now = performance.now()) {
     if (!pieceMesh) return;
 
@@ -753,6 +772,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       pieceCenters[k * 3 + 1] = ty;
       pieceCenters[k * 3 + 2] = tz;
       pieceScale[k] = tScale;
+      if (pieceCapturable) pieceCapturable[k] = capturable.has(inst.lattice) ? 1 : 0;
 
       if (is4D) {
         if (inst.home) {
@@ -771,6 +791,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
     pieceMesh.geometry.attributes.aCenter.needsUpdate = true;
     pieceMesh.geometry.attributes.aScale.needsUpdate = true;
+    if (pieceMesh.geometry.attributes.aCapturable) pieceMesh.geometry.attributes.aCapturable.needsUpdate = true;
     if (is4D) pieceMesh.geometry.attributes.aAlpha.needsUpdate = true;
 
     syncModelPieces();
@@ -824,6 +845,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     shownTargets.length = 0;
     for (const lattice of targets) {
       const s = homeSlotOf[lattice];
+      // Overriding selection behavior for capturable pieces: they render with a
+      // transparent red material directly, so empty-square markers are suppressed.
+      if (capturable.has(lattice)) continue;
       if (s >= 0 && visible(s) && shownTargets.length < HIGHLIGHT_MAX) shownTargets.push(lattice);
     }
     const n = shownTargets.length;
@@ -938,7 +962,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   function syncModelPieces() {
     modelPieces.update(pieceMode === 'meshes' && showPieces, pieceCenters, pieceScale, pieceAlpha,
-      (inst) => visible(inst.slot));
+      (inst) => visible(inst.slot), capturable);
   }
 
   function resize() {
@@ -1316,17 +1340,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       if (selected !== null) {
         if (layer !== null && layerSelect) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
       }
-      modelPieces.setHighlight(selected);
-      // Occupancy is deliberately ignored: rays run to the edge, so this is
-      // the piece's reach on an empty board rather than its legal moves.
       targets = selected === null ? [] : envelope(pos, selected);
+      updateCapturable();
+      modelPieces.setCapturable(capturable);
+      modelPieces.setHighlight(selected);
       writeSlotPositions();
       const piece = selected === null ? null : pos.get(selected);
-      // Blank until something is picked: an idle caption is just chrome over
-      // the view, and the board summary it used to hold said nothing that
-      // changes.
+      const coordText = selected === null ? ''
+        : coords[selected].map((v, i) => `${['x', 'y', 'z', 'w'][i] ?? i}:${v + 1}`).join(', ');
       caption.textContent = selected === null ? ''
-        : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · (${coords[selected].map((v) => v + 1).join(',')})`;
+        : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · (${coordText})`;
       needsRender = true;
     },
     destroy() {

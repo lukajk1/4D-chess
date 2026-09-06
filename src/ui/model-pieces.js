@@ -85,6 +85,26 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   const ghostMaterial = new THREE.MeshStandardMaterial({
     roughness: .68, metalness: 0, transparent: true, opacity: .42, depthWrite: false,
   });
+  const captureMaterial = new THREE.MeshStandardMaterial({
+    color: '#ff2828',
+    emissive: '#880000',
+    emissiveIntensity: 0.35,
+    roughness: 0.3,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.62,
+    depthWrite: false,
+  });
+  const captureGhostMaterial = new THREE.MeshStandardMaterial({
+    color: '#ff2828',
+    emissive: '#880000',
+    emissiveIntensity: 0.2,
+    roughness: 0.3,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.32,
+    depthWrite: false,
+  });
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: outlineColor, side: THREE.BackSide });
   outlineMaterial.onBeforeCompile = outlineShader;
   const groups = new Map();
@@ -99,6 +119,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // hold, so it cannot drift out of step with them.
   let highlight = null;
   let enabled = false;
+  let capturable = new Set();
+  let lastUpdateArgs = null;
 
   const makeMesh = (count, meshMaterial, geometry, renderOrder) => {
     if (!count) return null;
@@ -129,6 +151,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       hull,
       solid: { mesh: colour(makeMesh(homes.length, material, geometry, 2), homes), slots: homes },
       ghost: { mesh: colour(makeMesh(ghosts.length, ghostMaterial, geometry, 1), ghosts), slots: ghosts },
+      captureSolid: { mesh: makeMesh(homes.length, captureMaterial, geometry, 3), slots: homes },
+      captureGhost: { mesh: makeMesh(ghosts.length, captureGhostMaterial, geometry, 2), slots: ghosts },
       outline: makeMesh(Math.min(OUTLINE_MAX, slots.length), outlineMaterial, hull, 1),
     });
   };
@@ -192,36 +216,53 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     pickTargets() {
       const targets = [];
       for (const group of groups.values()) {
-        for (const part of [group.solid, group.ghost]) {
-          if (part.mesh?.visible) targets.push({ mesh: part.mesh, slots: part.slots });
+        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost]) {
+          if (part?.mesh?.visible) targets.push({ mesh: part.mesh, slots: part.slots });
         }
       }
       return targets;
+    },
+    setCapturable(set) {
+      capturable = set instanceof Set ? set : new Set(set ?? []);
+      if (lastUpdateArgs) {
+        this.update(...lastUpdateArgs);
+      }
     },
     setHighlight(lattice) {
       highlight = lattice;
       writeOutlines();
     },
-    update(on, centers, scales, alphas, visible) {
+    update(on, centers, scales, alphas, visible, capturableSet) {
+      lastUpdateArgs = [on, centers, scales, alphas, visible];
       enabled = on;
+      if (capturableSet !== undefined) {
+        capturable = capturableSet instanceof Set ? capturableSet : new Set(capturableSet ?? []);
+      }
       for (const group of groups.values()) {
-        for (const [kind, { mesh, slots }] of Object.entries({ solid: group.solid, ghost: group.ghost })) {
+        const batches = [
+          { kind: 'solid', mesh: group.solid.mesh, slots: group.solid.slots, isCapture: false },
+          { kind: 'ghost', mesh: group.ghost.mesh, slots: group.ghost.slots, isCapture: false },
+          { kind: 'solid', mesh: group.captureSolid.mesh, slots: group.captureSolid.slots, isCapture: true },
+          { kind: 'ghost', mesh: group.captureGhost.mesh, slots: group.captureGhost.slots, isCapture: true },
+        ];
+        for (const { kind, mesh, slots, isCapture } of batches) {
           if (!mesh) continue;
           mesh.visible = on;
           if (!on) continue;
           slots.forEach((slot, i) => {
+            const lat = instances[slot].lattice;
+            const isCap = capturable.has(lat);
+            const match = isCapture ? isCap : !isCap;
             transform.position.fromArray(centers, slot * 3);
-            // Ghosts emerge with the unfolding instead of stacking visibly
-            // over their home model while all cell copies still coincide.
             const emergence = kind === 'ghost' ? Math.min(1, alphas[slot] / .3) : 1;
-            transform.scale.setScalar(visible(instances[slot]) ? scales[slot] * MODEL_SCALE * emergence : 0);
-            const char = pieceAt(instances[slot].lattice);
+            const s = (match && visible(instances[slot])) ? scales[slot] * MODEL_SCALE * emergence : 0;
+            transform.scale.setScalar(s);
+            const char = pieceAt(lat);
             transform.rotation.y = char === char.toUpperCase() ? 0 : Math.PI;
             transform.updateMatrix();
             mesh.setMatrixAt(i, transform.matrix);
           });
           mesh.instanceMatrix.needsUpdate = true;
-          // Raycasting tests this first, and it goes stale as pieces unfold.
           mesh.boundingSphere = null;
         }
       }
@@ -230,14 +271,16 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     dispose() {
       disposed = true;
       for (const group of groups.values()) {
-        for (const mesh of [group.solid.mesh, group.ghost.mesh, group.outline]) {
-          if (!mesh) continue;
-          scene.remove(mesh);
-          mesh.dispose();
+        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }]) {
+          if (!part?.mesh) continue;
+          scene.remove(part.mesh);
+          part.mesh.dispose();
         }
       }
       material.dispose();
       ghostMaterial.dispose();
+      captureMaterial.dispose();
+      captureGhostMaterial.dispose();
       outlineMaterial.dispose();
       scene.remove(ambient, key);
     },

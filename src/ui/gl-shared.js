@@ -148,16 +148,19 @@ export const PIECE_VERTEX = `
   attribute float aHidden;
   attribute float aScale;
   attribute float aAlpha;
+  attribute float aCapturable;
   varying vec2 vUv;
   varying vec2 vCell;
   varying float vHidden;
   varying float vAlpha;
+  varying float vCapturable;
   uniform float uSize;
   void main() {
     vUv = uv;
     vCell = aCell;
     vHidden = aHidden;
     vAlpha = aAlpha;
+    vCapturable = aCapturable;
     // Billboard by offsetting in view space, which faces the camera under
     // both projections without any per-frame CPU work. aScale lets a piece
     // track the local lattice spacing, which the 4D perspective varies.
@@ -175,6 +178,7 @@ export const PIECE_FRAGMENT = `
   varying vec2 vCell;
   varying float vHidden;
   varying float vAlpha;
+  varying float vCapturable;
   uniform sampler2D uAtlas;
   uniform vec2 uGrid;
   void main() {
@@ -185,7 +189,11 @@ export const PIECE_FRAGMENT = `
     // The glyph edge is still alpha-tested for a crisp outline; the instance
     // alpha then lets ghost copies draw translucent.
     if (texel.a < 0.4) discard;
-    gl_FragColor = vec4(texel.rgb, vAlpha);
+    if (vCapturable > 0.5) {
+      gl_FragColor = vec4(1.0, 0.18, 0.18, vAlpha * 0.65);
+    } else {
+      gl_FragColor = vec4(texel.rgb, vAlpha);
+    }
   }`;
 
 export function buildGlyphAtlas(chars, glyphFor) {
