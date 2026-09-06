@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>n-dimensional chess</title>
+<link rel="stylesheet" href="src/ui/styles.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>n-dimensional chess</h1>
+    <p id="blurb"></p>
+    <span class="spacer"></span>
+    <select id="variant" aria-label="Variant"></select>
+    <button id="reset">New game</button>
+  </header>
+
+  <div class="layout">
+    <section>
+      <div class="game-state">
+        <span id="turn" class="turn-token white"></span>
+        <strong id="status">White to move</strong>
+        <span class="spacer" style="margin-left:auto"></span>
+        <button id="undo">Undo</button>
+      </div>
+      <div id="board-area"></div>
+    </section>
+
+    <aside>
+      <div class="panel">
+        <h2>Moves</h2>
+        <div class="history-scroll"><ol id="history"></ol></div>
+      </div>
+      <div class="panel">
+        <h2>Position</h2>
+        <input id="fen" spellcheck="false" aria-label="Position notation">
+        <div class="fen-actions">
+          <button id="copy">Copy</button>
+          <button id="load">Load</button>
+        </div>
+        <p class="hint">Shape, then placement. On an 8&times;8 board the placement field is ordinary FEN.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<dialog id="promotion">
+  <strong>Promote to</strong>
+  <div id="promotion-choices"></div>
+</dialog>
+
+<script type="module" src="src/ui/app.js"></script>
+</body>
+</html>

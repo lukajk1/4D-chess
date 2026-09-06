@@ -1,0 +1,11 @@
+{
+  "name": "n-dimensional-chess",
+  "version": "0.1.0",
+  "description": "Chess generalised over any number of dimensions",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/core.test.js"
+  }
+}
