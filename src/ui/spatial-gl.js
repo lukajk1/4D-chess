@@ -131,7 +131,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   // each to its own cell in the net. Strictly interior points get one faint
   // slot and fade out when unfolded, having no cell to travel to.
   const wScaleOf = (c) => (is4D ? 2.5 / (2.5 - (c[3] - center[3]) / (center[3] || 1)) : 1);
-  const basePointSize = is4D ? 0.19 : 0.16;
+  const basePointSize = is4D ? 0.133 : 0.112;
 
   const slots = [];
   if (is4D) {
@@ -645,12 +645,22 @@ export function createSpatialView(pos, onSelect, glyphFor) {
       && (cellFilter === null || slots[s].cell === cellFilter);
   };
 
+  const hasVisibleModelAt = (s) => {
+    const piece = pos.get(slotLattice[s]);
+    return showPieces && pieceMode === 'meshes' && piece
+      && modelPieces.has(piece.toLowerCase()) && visible(s);
+  };
+
   function applyFilters() {
     const t = unfoldT;
     for (let s = 0; s < slotCount; s++) {
       // Points on no cell have nowhere to unfold to, so they fade away.
       const fade = is4D && !slots[s].cell ? 1 - Math.min(1, t / 0.5) : 1;
-      pointAlpha[s] = (visible(s) ? baseAlpha[s] : 0.06) * fade;
+      // A point sprite and a model anchored at the same coordinate intersect
+      // ambiguously because the sprite only has one flat depth value. The
+      // model carries the occupied-square marker itself, so suppress that
+      // sphere while retaining the point in the raycast geometry.
+      pointAlpha[s] = hasVisibleModelAt(s) ? 0 : (visible(s) ? baseAlpha[s] : 0.06) * fade;
     }
     pointGeometry.attributes.aAlpha.needsUpdate = true;
 
@@ -737,7 +747,8 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
     const hits = raycaster.intersectObject(pointCloud, false)
-      .filter((hit) => visible(hit.index) && pointAlpha[hit.index] > 0.1);
+      .filter((hit) => visible(hit.index)
+        && (pointAlpha[hit.index] > 0.1 || hasVisibleModelAt(hit.index)));
     if (hits.length) onSelect(slotLattice[hits[0].index]);
   });
 

@@ -101,7 +101,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
       position.set(worldOf(c), local * 3);
       brighten(scratch.set((c[0] + c[1] + c[2]) % 2 ? theme.dark : theme.light));
       color.set([scratch.r, scratch.g, scratch.b], local * 3);
-      size[local] = 0.3;
+      size[local] = 0.21;
     }
     geometry.computeBoundingSphere();
     scene.add(points);
@@ -165,7 +165,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
 
     const halo = makePointCloud(1, pointUniforms, { depthWrite: false });
     halo.geometry.attributes.aColor.array.set([...new THREE.Color(theme.selected)]);
-    halo.geometry.attributes.aSize.array[0] = 0.52;
+    halo.geometry.attributes.aSize.array[0] = 0.364;
     halo.geometry.attributes.aAlpha.array[0] = 0.9;
     halo.material.depthTest = false;
     halo.points.renderOrder = 3;
