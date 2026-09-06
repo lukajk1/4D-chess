@@ -65,7 +65,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   canvas.className = 'cube-canvas';
   canvas.tabIndex = 0;
   canvas.setAttribute('role', 'group');
-  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, click a point to inspect.`);
+  canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, click a piece or an empty point to inspect.`);
   root.append(canvas);
 
   if (is4D) {
@@ -466,7 +466,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
     modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
     applyFilters();
-  });
+  }, theme.selected);
 
   // ---- selection halo
   const HALO_MAX = 8;
@@ -521,15 +521,18 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     const alpha = haloGeometry.attributes.aAlpha.array;
     const where = haloGeometry.attributes.position.array;
     alpha.fill(0);
+    let n = 0;
     if (selected !== null) {
-      let n = 0;
       for (let s = 0; s < slotCount && n < HALO_MAX; s++) {
-        if (slotLattice[s] !== selected) continue;
+        // A copy drawn as a model carries the rim instead; haloing it too
+        // would put a bright disc inside the piece.
+        if (slotLattice[s] !== selected || hasVisibleModelAt(s)) continue;
         where.set(positions.subarray(s * 3, s * 3 + 3), n * 3);
         alpha[n] = 0.85;
         n++;
       }
     }
+    halo.visible = n > 0;
     haloGeometry.attributes.position.needsUpdate = true;
     haloGeometry.attributes.aAlpha.needsUpdate = true;
     haloGeometry.computeBoundingSphere();
@@ -752,10 +755,26 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObject(pointCloud, false)
-      .filter((hit) => visible(hit.index)
-        && (pointAlpha[hit.index] > 0.1 || hasVisibleModelAt(hit.index)));
-    if (hits.length) onSelect(slotLattice[hits[0].index]);
+    // Pieces are picked off their own geometry, so a click lands where the
+    // model actually is -- the head of a king included -- rather than on a
+    // fixed-radius sphere at its foot. The point under a piece is no longer a
+    // target of its own; it only becomes one again in glyph mode, or with the
+    // pieces hidden, where pickTargets is empty.
+    let best = null;
+    const closer = (distance, slot) => {
+      if (best && distance >= best.distance) return;
+      best = { distance, lattice: slotLattice[slot] };
+    };
+    for (const { mesh, slots } of modelPieces.pickTargets()) {
+      for (const hit of raycaster.intersectObject(mesh, false)) {
+        const slot = pieceInstances[slots[hit.instanceId]].slot;
+        if (visible(slot)) closer(hit.distance, slot);
+      }
+    }
+    for (const hit of raycaster.intersectObject(pointCloud, false)) {
+      if (visible(hit.index) && pointAlpha[hit.index] > 0.1) closer(hit.distance, hit.index);
+    }
+    if (best) onSelect(best.lattice);
   });
 
   // ---- controls wiring
@@ -950,7 +969,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
           }
         }
       }
-      halo.visible = selected !== null;
+      modelPieces.setHighlight(selected);
       syncHalo();
       const piece = selected === null ? null : pos.get(selected);
       caption.textContent = selected === null

@@ -171,6 +171,12 @@ so all 232 of them cost one draw call.
 The main spatial viewer defaults to 3D pieces and offers a **3D / Glyphs** toggle. 3D mode loads the
 six GLB pieces in `assets/chess/` and instances each type with per-piece colours.
 Models preserve their relative sizes and sit with their bases on lattice points.
+Clicking picks off the model geometry itself, so the head of a king is as good a
+target as its foot and the lattice point under a piece is no longer a separate
+one; a selected piece is ringed by an inverted hull -- the same mesh welded,
+re-normalled, grown along its normals and drawn back faces only -- which reaches
+individual instances where a postprocessing outline pass could not. Empty points
+keep the halo.
 Unfolding ghost copies use translucent instances of the same models; auxiliary
 views retain glyphs. If a model cannot load, its pieces retain their glyphs. The set was extracted from the supplied Pia Leung
 GLB; see `assets/chess/README.md` for provenance and triangle counts.
