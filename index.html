@@ -8,13 +8,13 @@
 </head>
 <body>
 <main>
-  <header>
-    <h1>n-dimensional chess</h1>
-    <p id="blurb"></p>
-    <span class="spacer"></span>
-    <select id="variant" aria-label="Variant"></select>
-    <button id="reset">New game</button>
-  </header>
+  <!-- No page chrome: these live here only until app.js moves them into
+       whichever control surface the current variant uses, so the view gets
+       the full window height. -->
+  <!-- The picker floats over the scene, centred, with no bar behind it. -->
+  <div id="variant-dock"><select id="variant" aria-label="Variant"></select></div>
+  <!-- Reset waits here until app.js docks it in the current control surface. -->
+  <div id="stash" hidden><button id="reset">New game</button></div>
 
   <div class="layout">
     <section>

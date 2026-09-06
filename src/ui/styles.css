@@ -89,19 +89,6 @@ main {
   padding: 28px 24px 60px;
 }
 
-header {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 16px;
-  margin-bottom: 24px;
-}
-
-h1 { font-size: 20px; margin: 0; }
-#blurb { color: var(--muted); font-size: 14px; margin: 0; }
-header .spacer { margin-left: auto; }
 
 button, select, input {
   font: inherit;
@@ -528,3 +515,45 @@ body:not(.inspection) #board-area { flex: 1; min-height: 0; display: flex; align
 }
 .play-board:not(.line) .board { width: 100%; height: auto; aspect-ratio: 1; flex: none; max-width: none; }
 .play-board.line { width: 100%; max-width: 1000px; }
+
+/* The header is now just the variant picker, so it takes a single short row
+   and the views reclaim the height the title and blurb were holding. */
+.explorer-shell { height: calc(100vh - 108px); }
+body:not(.inspection) .layout { height: calc(100vh - 86px); }
+.play-board { width: min(100%, calc(100vh - 168px)); }
+
+/* No header at all: the views take the full window height. */
+.explorer-shell { height: calc(100vh - 52px); }
+body:not(.inspection) .layout { height: calc(100vh - 46px); }
+.play-board { width: min(100%, calc(100vh - 128px)); }
+
+/* The variant picker floats centred over the scene, with no bar behind it.
+   Only the control itself takes pointer events, so the rest of that strip
+   stays draggable for orbiting. */
+#variant-dock {
+  position: fixed;
+  top: 12px;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+#variant-dock select {
+  pointer-events: auto;
+  min-height: 32px;
+  padding: 5px 30px 5px 12px;
+  font-size: 13px;
+  background-color: color-mix(in srgb, var(--panel) 78%, transparent);
+  backdrop-filter: blur(8px);
+}
+/* Keep the top of each view clear of the floating picker. */
+.explorer-shell { height: calc(100vh - 66px); margin-top: 14px; }
+body:not(.inspection) .layout { height: calc(100vh - 60px); margin-top: 14px; }
+.play-board { width: min(100%, calc(100vh - 142px)); }
+
+/* Play variants still carried the original page padding (28px top, 60px
+   bottom), which pushed the layout 42px past the viewport and produced a
+   scrollbar -- which in turn knocked the centred picker off by half its width. */
+body:not(.inspection) main { padding: 12px 22px 22px; }

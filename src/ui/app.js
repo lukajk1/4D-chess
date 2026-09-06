@@ -17,7 +17,6 @@ const els = {
   copy: document.querySelector('#copy'),
   undo: document.querySelector('#undo'),
   reset: document.querySelector('#reset'),
-  blurb: document.querySelector('#blurb'),
   promotion: document.querySelector('#promotion'),
   promotionChoices: document.querySelector('#promotion-choices'),
 };
@@ -135,6 +134,8 @@ function refreshExplorer(pos) {
     const resetView = heading?.querySelector('.reset-camera');
     heading?.remove();
     if (resetView) toolbar.append(resetView);
+    // The header is only the variant picker now, so reset joins the controls.
+    toolbar.append(els.reset);
     if (controls) {
       controls.append(toolbar);
       controlsPanel.append(controls);
@@ -160,7 +161,6 @@ function refreshExplorer(pos) {
   }
   explorer.update(state.selected);
   els.status.textContent = `${pos.dims}D position explorer`;
-  els.blurb.textContent = VARIANTS[state.variantId].blurb;
   els.reset.textContent = 'Reset position';
   els.fen.value = toFen(pos);
 }
@@ -221,8 +221,9 @@ function refresh() {
   }
 
   els.fen.value = toFen(pos);
-  els.blurb.textContent = VARIANTS[state.variantId].blurb;
   els.undo.disabled = state.history.length === 0;
+  // 1D and 2D have no left control column, so reset sits beside undo.
+  els.undo.parentElement.append(els.reset);
   renderHistory();
 }
 
