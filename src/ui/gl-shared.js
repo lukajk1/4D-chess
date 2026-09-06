@@ -39,6 +39,16 @@ export function sectorOf(coord, shape) {
   return 'xyz'[axis] + (coord[axis] - (shape[axis] - 1) / 2 >= 0 ? 'max' : 'min');
 }
 
+// Small round points read dimmer than the flat squares the palette was picked
+// for, so the board colours are lifted before they reach a lattice. Scaling
+// lightness rather than the channels keeps the hue and saturation intact,
+// where multiplying RGB would just wash pale squares out toward white.
+export function brighten(color, factor = 1.3) {
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+  return color.setHSL(hsl.h, hsl.s, Math.min(1, hsl.l * factor));
+}
+
 export const readTheme = () => {
   const style = getComputedStyle(document.documentElement);
   const pick = (name, fallback) => (style.getPropertyValue(name).trim() || fallback);
@@ -77,9 +87,13 @@ export const POINT_FRAGMENT = `
   varying float vAlpha;
   uniform float uSolidPass;
   void main() {
-    // Round the square point sprite and feather its edge.
-    float d = length(gl_PointCoord - vec2(0.5));
-    if (d > 0.5) discard;
+    // The sprite is a flat square; treat it as a sphere. Recovering the normal
+    // analytically from the point coordinate gives real per-fragment shading
+    // without a single extra vertex -- the alternative is thousands of sphere
+    // meshes for the same picture.
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float r2 = dot(p, p);
+    if (r2 > 1.0) discard;
     // Drawn in two passes over the same buffer. Solid points write depth, so
     // a nearer point hides a farther one; faint points (dimmed interior,
     // filtered out) blend over the result afterwards without occluding
@@ -87,7 +101,17 @@ export const POINT_FRAGMENT = `
     bool solid = vAlpha >= 0.5;
     if (uSolidPass > 0.5 && !solid) discard;
     if (uSolidPass < 0.5 && solid) discard;
-    gl_FragColor = vec4(vColor, vAlpha * smoothstep(0.5, 0.42, d));
+    // gl_PointCoord runs top-down, so y is flipped to face the light.
+    vec3 normal = vec3(p.x, -p.y, sqrt(max(1.0 - r2, 0.0)));
+    vec3 light = normalize(vec3(0.35, 0.55, 0.75));
+    vec3 halfDir = normalize(light + vec3(0.0, 0.0, 1.0));
+    float diffuse = max(dot(normal, light), 0.0);
+    // Intensity, not exponent, is what dims a highlight: a lower exponent
+    // spreads it wider instead. Kept fairly tight and simply made faint.
+    float spec = pow(max(dot(normal, halfDir), 0.0), 30.0);
+    // Ambient stays high so an unlit face keeps its board colour readable.
+    vec3 shaded = vColor * (0.45 + 0.55 * diffuse) + vec3(spec * 0.12);
+    gl_FragColor = vec4(shaded, vAlpha * (1.0 - smoothstep(0.82, 1.0, r2)));
   }`;
 
 export const LINE_VERTEX = `

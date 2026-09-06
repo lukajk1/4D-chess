@@ -4,7 +4,7 @@ import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { isInterior, tesseractCells, latticeStats, hingeTree, unfoldCoord } from './tesseract.js';
 import {
-  CELL_COLORS, readTheme, POINT_VERTEX, POINT_FRAGMENT,
+  CELL_COLORS, readTheme, brighten, POINT_VERTEX, POINT_FRAGMENT,
   LINE_VERTEX, LINE_FRAGMENT, PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas,
 } from './gl-shared.js';
 
@@ -43,10 +43,10 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   root.innerHTML = `
     <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
-      ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['orthographic', 'Ortho'], ['perspective', 'Perspective']], 'orthographic')}
+      ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       ${is4D ? `<label>Cell <select aria-label="Visible cell"><option value="all">All 8 cells</option>${cells.map((cell, i) => `<option value="${i}">${cell.label}${cell.role === 'face' ? '' : ` (${cell.role})`}</option>`).join('')}</select></label>` : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell']], 'board') : ''}
-      <label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>
+      ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
       <label>Spacing <input aria-label="Layer spacing" type="range" min="0.6" max="2" step="0.05" value="1"></label>
       ${pieceCount ? '<label class="piece-toggle"><input type="checkbox" checked> Pieces</label>' : ''}
       ${is4D ? `<div class="control">
@@ -139,9 +139,10 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   slots.forEach((slot, s) => {
     const c = coords[slot.lattice];
     const parity = c.reduce((a, b) => a + b, 0) % 2;
-    scratch.set(parity ? theme.dark : theme.light);
+    brighten(scratch.set(parity ? theme.dark : theme.light));
     boardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
-    scratch.set(is4D ? (slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted) : parity ? theme.dark : theme.light);
+    // In 3D there are no cells, so the brightened board colours stand in.
+    if (is4D) scratch.set(slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted);
     cellColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     const loose = is4D && !slot.cell;
     pointSize[s] = basePointSize * wScaleOf(c) * (loose ? 0.62 : 1);
@@ -706,7 +707,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   onSegment('Projection', setCamera);
   const layerSelect = root.querySelector('[aria-label="Visible layer"]');
   const cellSelect = root.querySelector('[aria-label="Visible cell"]');
-  layerSelect.addEventListener('change', () => {
+  layerSelect?.addEventListener('change', () => {
     layer = layerSelect.value === 'all' ? null : Number(layerSelect.value);
     applyFilters();
   });
@@ -786,7 +787,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
   rebuildPositions();
   applyFilters();
   resize();
-  setCamera('orthographic');
+  setCamera('perspective');
   reportZoom();
   syncFoldUI();
   tick();
@@ -796,7 +797,7 @@ export function createSpatialView(pos, onSelect, glyphFor) {
     update(index) {
       selected = index;
       if (selected !== null) {
-        if (layer !== null) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
+        if (layer !== null && layerSelect) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
         if (cellFilter !== null && cellSelect) {
           // Keep the filtered cell if it holds the selection; otherwise follow
           // the selection to one of its cells, or drop the filter when the

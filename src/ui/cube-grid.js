@@ -4,7 +4,7 @@ import { squareName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { tesseractCells, localIndexIn, latticeStats } from './tesseract.js';
 import {
-  CELL_COLORS, readTheme, LINE_VERTEX, LINE_FRAGMENT,
+  CELL_COLORS, readTheme, brighten, LINE_VERTEX, LINE_FRAGMENT,
   PIECE_VERTEX, PIECE_FRAGMENT, buildGlyphAtlas, makePointCloud,
 } from './gl-shared.js';
 
@@ -99,7 +99,7 @@ export function createCubeGrid(pos, onSelect, glyphFor) {
     for (let local = 0; local < cell.count; local++) {
       const c = localCoord(cell, local);
       position.set(worldOf(c), local * 3);
-      scratch.set((c[0] + c[1] + c[2]) % 2 ? theme.dark : theme.light);
+      brighten(scratch.set((c[0] + c[1] + c[2]) % 2 ? theme.dark : theme.light));
       color.set([scratch.r, scratch.g, scratch.b], local * 3);
       size[local] = 0.3;
     }
