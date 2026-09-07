@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
+export const PIECE_COLORS = { white: '#fff3d8', black: '#34483d' };
 // Original king is 8.96 units high. One shared scale preserves the set's proportions.
 const MODEL_SCALE = .09;
 // Module-level cache for parsed geometries to avoid asynchronous
@@ -47,7 +48,7 @@ for (const type of Object.keys(FILES)) {
 }
 
 export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d', turn = null) {
-  const material = new THREE.MeshStandardMaterial({ roughness: .24, metalness: .04, envMapIntensity: .72 });
+  const material = new THREE.MeshStandardMaterial({ roughness: .24, metalness: .04, envMapIntensity: .42 });
   const ghostMaterial = new THREE.MeshStandardMaterial({
     roughness: .3, metalness: .03, envMapIntensity: .6,
     transparent: true, opacity: .42, depthWrite: false,
@@ -79,8 +80,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   const outlineMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
   const groups = new Map();
   let disposed = false;
-  const ambient = new THREE.HemisphereLight('#fff8e9', '#637365', 2);
-  const key = new THREE.DirectionalLight('#ffffff', 2.5);
+  const ambient = new THREE.HemisphereLight('#fff8e9', '#637365', 1.25);
+  const key = new THREE.DirectionalLight('#ffffff', 1.8);
   key.position.set(5, 9, 6);
   scene.add(ambient, key);
   const transform = new THREE.Object3D();
@@ -106,7 +107,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   const colour = (mesh, subset) => {
     subset.forEach((slot, i) => {
       const char = pieceAt(instances[slot].lattice);
-      mesh?.setColorAt(i, new THREE.Color(char === char.toUpperCase() ? '#fff3d8' : '#34483d'));
+      mesh?.setColorAt(i, new THREE.Color(char === char.toUpperCase() ? PIECE_COLORS.white : PIECE_COLORS.black));
     });
     return mesh;
   };

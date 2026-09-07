@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { envelope } from '../core/movegen.js';
 import { squareName, layerName, wName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
-import { createModelPieces } from './model-pieces.js';
+import { createModelPieces, PIECE_COLORS } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
 import { isInterior, tesseractCells, hingeTree, unfoldCoord } from './tesseract.js';
 import {
@@ -64,7 +65,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
-      ${is4D ? segmented('Cell shape', 'Cell shape', [['tall', 'Tall'], ['cube', 'Cube'], ['even', 'Even height']], 'tall') : ''}
+      ${is4D ? segmented('Cell shape', 'Cell shape', [['even', 'Even height'], ['cube', 'Cube']], 'even') : ''}
       ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
       ${segmented('Space style', 'Space style', [['opaque', 'Opaque'], ['squares', 'Translucent'], ['verts', 'Points']], 'opaque')}
       ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
@@ -192,12 +193,15 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // cell, or a grayscale ramp across the w layers.
   const cellColors = new Float32Array(slotCount * 3);
   const boardColors = new Float32Array(slotCount * 3);
+  const opaqueBoardColors = new Float32Array(slotCount * 3);
   const wColors = new Float32Array(slotCount * 3);
   slots.forEach((slot, s) => {
     const c = coords[slot.lattice];
     const parity = c.reduce((a, b) => a + b, 0) % 2;
     brighten(scratch.set(parity ? theme.dark : theme.light));
     boardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
+    scratch.set(parity ? PIECE_COLORS.black : PIECE_COLORS.white);
+    opaqueBoardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     // In 3D there are no cells, so the brightened board colours stand in.
     if (is4D) scratch.set(slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted);
     cellColors.set([scratch.r, scratch.g, scratch.b], s * 3);
@@ -274,9 +278,19 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // step -- so this is a factor rather than a distance, and up means further
   // apart in both.
   let wSpread = 1;
-  let cellShape = 'tall';
-  const spacingForCellShape = (shape) => shape === 'tall' ? 1.35 : shape === 'even' ? 2.2 : 1;
-  let spacing = 1.35;
+  let cellShape = 'even';
+  const spacingForCellShape = (shape) => shape === 'even' ? 2.2 : 1;
+  let spacing = 2.2;
+  // Nested w shells expand away from the tesseract's vertical centre. Thus w
+  // runs downward through the lower α/β boards and upward through γ/δ. A
+  // clamped ramp preserves that orientation while remaining continuous when
+  // a 4D rotation carries geometry across the centre plane.
+  const evenHeightAt = (z, w) => {
+    const dz = z - center[2];
+    const dw = (w - center[3]) / pos.shape[3];
+    const outward = Math.max(-1, Math.min(1, dz / .5));
+    return dz + dw * outward;
+  };
 
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
   const TAU = Math.PI * 2;
@@ -323,7 +337,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     // z chooses the major level and w subdivides the interval to the next z.
     // This keeps all n*n planes separate without stretching the full stack by n.
     const verticalCoordinate = cellShape === 'even'
-      ? (q[2] - center[2]) + (q[3] - center[3]) / pos.shape[3]
+      ? evenHeightAt(q[2], q[3])
       : (q[2] - center[2]) * ws;
     out[1] = verticalCoordinate * sp * g;
     out[2] = -(q[1] - center[1]) * ws * g;
@@ -813,6 +827,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.addPass(renderPass);
   composer.addPass(outlinePass);
+  const outputPass = new OutputPass();
+  composer.addPass(outputPass);
 
   // ---- selection halo
   const HALO_MAX = 8;
@@ -920,22 +936,47 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
   const markers = new THREE.Points(markerGeometry, markerMaterial);
 
-  // Square mode uses four narrow quads around the footprint as its move
-  // marker. Native WebGL lines are fixed at one pixel on most browsers, while
-  // these strips retain a visibly heavier width at every camera angle.
+  // Square mode draws one expanded quad per footprint. The fragment shader
+  // cuts an anti-aliased ring from it using screen-space derivatives, retaining
+  // the geometry-based highlight without requiring full-scene MSAA.
   const SQUARE_OUTLINE_MAX = HIGHLIGHT_MAX * (is4D ? 8 : 1);
-  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 16 * 3);
-  const squareOutlineIndices = new Uint32Array(SQUARE_OUTLINE_MAX * 24);
-  for (let i = 0; i < SQUARE_OUTLINE_MAX * 4; i++) {
+  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 4 * 3);
+  const squareOutlineEdges = new Float32Array(SQUARE_OUTLINE_MAX * 4 * 2);
+  const squareOutlineIndices = new Uint32Array(SQUARE_OUTLINE_MAX * 6);
+  for (let i = 0; i < SQUARE_OUTLINE_MAX; i++) {
     const v = i * 4;
     squareOutlineIndices.set([v, v + 1, v + 2, v, v + 2, v + 3], i * 6);
+    squareOutlineEdges.set([-1, -1, 1, -1, 1, 1, -1, 1], i * 8);
   }
   const squareOutlineGeometry = new THREE.BufferGeometry();
   squareOutlineGeometry.setAttribute('position', new THREE.BufferAttribute(squareOutlinePositions, 3));
+  squareOutlineGeometry.setAttribute('aEdge', new THREE.BufferAttribute(squareOutlineEdges, 2));
   squareOutlineGeometry.setIndex(new THREE.BufferAttribute(squareOutlineIndices, 1));
   squareOutlineGeometry.setDrawRange(0, 0);
-  const squareOutlineMaterial = new THREE.MeshBasicMaterial({
-    color: '#9dffb8', transparent: true, opacity: 1, depthWrite: false, side: THREE.DoubleSide,
+  const squareOutlineMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: { uColor: { value: new THREE.Color('#9dffb8') } },
+    vertexShader: `
+      attribute vec2 aEdge;
+      varying vec2 vEdge;
+      void main() {
+        vEdge = aEdge;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vEdge;
+      uniform vec3 uColor;
+      void main() {
+        float edgeDistance = max(abs(vEdge.x), abs(vEdge.y));
+        float feather = fwidth(edgeDistance) * 1.25;
+        float ring = smoothstep(0.9203 - feather, 0.9203 + feather, edgeDistance);
+        ring *= 1.0 - smoothstep(1.0 - feather, 1.0, edgeDistance);
+        gl_FragColor = vec4(uColor, ring);
+      }
+    `,
   });
   const squareOutlines = new THREE.Mesh(squareOutlineGeometry, squareOutlineMaterial);
 
@@ -972,7 +1013,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       const wScale = wScaleOf(c);
       latticeFolded[i * 3] = (c[0] - center[0]) * wScale;
       const verticalCoordinate = cellShape === 'even'
-        ? (c[2] - center[2]) + (c[3] - center[3]) / pos.shape[3]
+        ? evenHeightAt(c[2], c[3])
         : (c[2] - center[2]) * wScale;
       latticeFolded[i * 3 + 1] = verticalCoordinate * spacing;
       latticeFolded[i * 3 + 2] = -(c[1] - center[1]) * wScale;
@@ -1004,7 +1045,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // resolves to its own cell's colour as that cell swings away from the rest.
   function applyColors() {
     if (colourMode === 'board') {
-      pointColors.set(boardColors);
+      pointColors.set(latticeMode === 'opaque' ? opaqueBoardColors : boardColors);
     } else if (colourMode === 'w') {
       pointColors.set(wColors);
     } else if (!is4D) {
@@ -1224,21 +1265,15 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         const half = tileScale[s] / 2;
         const thickness = tileScale[s] * .035;
         const outer = half + thickness * .15;
-        const inner = half - thickness;
-        const quads = [
-          [[x - outer, y, z - outer], [x + outer, y, z - outer], [x + outer, y, z - inner], [x - outer, y, z - inner]],
-          [[x + inner, y, z - inner], [x + outer, y, z - inner], [x + outer, y, z + inner], [x + inner, y, z + inner]],
-          [[x - outer, y, z + inner], [x + outer, y, z + inner], [x + outer, y, z + outer], [x - outer, y, z + outer]],
-          [[x - outer, y, z - inner], [x - inner, y, z - inner], [x - inner, y, z + inner], [x - outer, y, z + inner]],
-        ];
-        for (let q = 0; q < quads.length; q++) {
-          for (let k = 0; k < 4; k++) {
-            squareOutlinePositions.set(quads[q][k], (n * 16 + q * 4 + k) * 3);
-          }
-        }
+        squareOutlinePositions.set([
+          x - outer, y, z - outer,
+          x + outer, y, z - outer,
+          x + outer, y, z + outer,
+          x - outer, y, z + outer,
+        ], n * 12);
         n++;
       }
-      squareOutlineGeometry.setDrawRange(0, n * 24);
+      squareOutlineGeometry.setDrawRange(0, n * 6);
       squareOutlineGeometry.attributes.position.needsUpdate = true;
       squareOutlineGeometry.computeBoundingSphere();
       squareOutlines.visible = n > 0;
@@ -1366,9 +1401,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     const opaqueSquares = latticeMode === 'opaque';
     tileMesh.visible = squareMode;
     tileMaterial.transparent = !opaqueSquares;
-    tileMaterial.uniforms.uOpacity.value = opaqueSquares ? 1 : 0.28;
+    tileMaterial.uniforms.uOpacity.value = opaqueSquares ? 1 : 0.35;
     tileMaterial.uniforms.uOpaque.value = opaqueSquares ? 1 : 0;
-    tileMaterial.uniforms.uEnvironmentStrength.value = opaqueSquares && tileMaterial.uniforms.uEnvironment.value ? .22 : 0;
+    tileMaterial.uniforms.uEnvironmentStrength.value = opaqueSquares && tileMaterial.uniforms.uEnvironment.value ? .1 : 0;
     tileMaterial.depthWrite = opaqueSquares;
 
     edgePairs.forEach((edge, i) => {
@@ -1573,6 +1608,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
   onSegment('Space style', (value) => {
     latticeMode = value;
+    applyColors();
     applyFilters();
     writeHighlights();
   });
@@ -1603,7 +1639,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       : null;
     scene.environment = background === 'sky' ? skyTexture : null;
     tileMaterial.uniforms.uEnvironment.value = scene.environment;
-    tileMaterial.uniforms.uEnvironmentStrength.value = latticeMode === 'opaque' && scene.environment ? .22 : 0;
+    tileMaterial.uniforms.uEnvironmentStrength.value = latticeMode === 'opaque' && scene.environment ? .1 : 0;
     needsRender = true;
   }
 
@@ -1939,18 +1975,22 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         measureNet();
         needsRebuild = true;
       }
-      if (state.cellShape !== undefined && state.cellShape !== cellShape) {
-        cellShape = state.cellShape;
-        spacing = spacingForCellShape(cellShape);
-        root.querySelectorAll('[aria-label="Cell shape"] button').forEach((btn) => {
-          btn.setAttribute('aria-pressed', String(btn.dataset.value === cellShape));
-        });
-        measureNet();
-        needsRebuild = true;
+      if (state.cellShape !== undefined) {
+        const restoredCellShape = state.cellShape === 'even' ? 'even' : 'cube';
+        if (restoredCellShape !== cellShape) {
+          cellShape = restoredCellShape;
+          spacing = spacingForCellShape(cellShape);
+          root.querySelectorAll('[aria-label="Cell shape"] button').forEach((btn) => {
+            btn.setAttribute('aria-pressed', String(btn.dataset.value === cellShape));
+          });
+          measureNet();
+          needsRebuild = true;
+        }
       } else if (state.cellShape === undefined && state.spacing !== undefined && state.spacing !== spacing) {
         // Camera state from before the preset had its own key.
         spacing = state.spacing;
-        cellShape = spacing > 1 ? 'tall' : 'cube';
+        cellShape = Math.abs(spacing - 2.2) < 0.01 ? 'even' : 'cube';
+        spacing = spacingForCellShape(cellShape);
         root.querySelectorAll('[aria-label="Cell shape"] button').forEach((btn) => {
           btn.setAttribute('aria-pressed', String(btn.dataset.value === cellShape));
         });
@@ -2046,6 +2086,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       skyTexture?.dispose();
       modelPieces.dispose();
       outlinePass.dispose();
+      outputPass.dispose();
       composer.dispose();
       renderer.dispose();
     },

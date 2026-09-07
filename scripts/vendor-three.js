@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 const root = join(import.meta.dirname, '..');
 const files = [
   ...['loaders/GLTFLoader.js', 'utils/BufferGeometryUtils.js', 'utils/SkeletonUtils.js'].map(file => [`node_modules/three/examples/jsm/${file}`, `vendor/three/addons/${file}`]),
-  ...['EffectComposer.js', 'MaskPass.js', 'OutlinePass.js', 'Pass.js', 'RenderPass.js', 'ShaderPass.js'].map(file => [`node_modules/three/examples/jsm/postprocessing/${file}`, `vendor/three/addons/postprocessing/${file}`]),
-  ['node_modules/three/examples/jsm/shaders/CopyShader.js', 'vendor/three/addons/shaders/CopyShader.js'],
+  ...['EffectComposer.js', 'MaskPass.js', 'OutlinePass.js', 'OutputPass.js', 'Pass.js', 'RenderPass.js', 'ShaderPass.js'].map(file => [`node_modules/three/examples/jsm/postprocessing/${file}`, `vendor/three/addons/postprocessing/${file}`]),
+  ...['CopyShader.js', 'OutputShader.js'].map(file => [`node_modules/three/examples/jsm/shaders/${file}`, `vendor/three/addons/shaders/${file}`]),
   // three.module.min.js imports ./three.core.min.js as a sibling, so the two
   // must stay side by side.
   ['node_modules/three/build/three.module.min.js', 'vendor/three/three.module.min.js'],

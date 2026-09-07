@@ -1,9 +1,12 @@
 // Short procedural cues: one lazy audio context, no samples or audio loop.
 // Each voice stops and disconnects after its decay. Audio failure must never
 // interrupt a move, and blocked autoplay must not queue stale game sounds.
+// Keep cue calls and synthesis ready, but leave output muted for now.
+const SFX_ENABLED = false;
 let context;
 
 function audioContext() {
+  if (!SFX_ENABLED) return null;
   const AudioContext = globalThis.AudioContext ?? globalThis.webkitAudioContext;
   if (!AudioContext) return null;
   context ??= new AudioContext();
