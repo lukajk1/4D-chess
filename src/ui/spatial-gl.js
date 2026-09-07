@@ -292,8 +292,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // apart in both.
   let wSpread = 1;
   let cellShape = 'even';
-  const spacingForCellShape = (shape) => shape === 'even' ? 2.2 : 1;
-  let spacing = 2.2;
+  // Optional per-variant vertical scale. Every path that sets `spacing` goes
+  // through spacingForCellShape, so one factor here covers the initial value,
+  // the Cell shape control and a restored camera state alike.
+  const verticalScale = pos.variant?.verticalSpacing ?? 1;
+  const spacingForCellShape = (shape) => (shape === 'even' ? 2.2 : 1) * verticalScale;
+  let spacing = spacingForCellShape(cellShape);
   // Nested w shells expand away from the tesseract's vertical centre. Thus w
   // runs downward through the lower α/β boards and upward through γ/δ. A
   // clamped ramp preserves that orientation while remaining continuous when

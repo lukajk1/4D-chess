@@ -14,7 +14,6 @@ const els = {
   variant: document.querySelector('#variant'),
   boardArea: document.querySelector('#board-area'),
   status: document.querySelector('#status'),
-  turn: document.querySelector('#turn'),
   history: document.querySelector('#history'),
   fen: document.querySelector('#fen'),
   load: document.querySelector('#load'),
@@ -67,14 +66,50 @@ function buildSlices(pos) {
   };
 }
 
+// 1D and 2D keep their DOM board, wrapped in the same interface the shell
+// docks: element, update, destroy. It has no canvas, no camera and no controls,
+// so the explorer's control column simply comes up holding only its toolbar.
+function createBoardView(pos) {
+  const root = document.createElement('div');
+  // The wrapper carries the square, so the file letters match the board's
+  // width rather than the whole centred area.
+  root.className = pos.dims === 1 ? 'play-board line' : 'play-board';
+  const draw = (selected) => {
+    const targets = new Map();
+    if (selected !== null) {
+      for (const move of state.moves) {
+        if (move.from === selected) targets.set(move.to, move);
+      }
+    }
+    const checked = inCheck(pos);
+    const parts = [renderBoard(pos, {
+      selected,
+      targets,
+      checkIndex: checked ? pos.kingIndex(pos.turn) : null,
+      lastMove: state.history.at(-1)?.move ?? null,
+      onSquare,
+    })];
+    parts.push(renderCoordinates(pos));
+    root.replaceChildren(...parts);
+  };
+  draw(state.selected);
+  // Nothing to tear down -- no GL context, and the DOM goes with the shell --
+  // but the shell calls destroy unconditionally, so honour the interface.
+  return { element: root, update: draw, destroy() {} };
+}
+
 function refreshExplorer(pos, lastMove = null) {
   if (!explorer || explorer.position !== pos) {
     const prevCamera = explorer?.viewer?.getCameraState?.();
     const prevOpen = explorer?.getOpen?.();
     explorer?.destroy();
 
-    const viewer = createSpatialView(pos, onSquare, glyphFor, lastMove);
-    if (prevCamera) viewer.setCameraState(prevCamera);
+    const viewer = pos.dims > 2
+      ? createSpatialView(pos, onSquare, glyphFor, lastMove)
+      : createBoardView(pos);
+    // Optional: a camera state only means something to the spatial viewer, and
+    // switching from one of those to a flat board carries a live one across.
+    if (prevCamera) viewer.setCameraState?.(prevCamera);
     const shell = document.createElement('div');
     shell.className = 'explorer-shell';
     const main = document.createElement('div');
@@ -86,7 +121,14 @@ function refreshExplorer(pos, lastMove = null) {
     const turn = document.createElement('strong');
     turn.className = 'explorer-turn';
     turn.dataset.turn = pos.turn;
-    turn.textContent = `${pos.turn === 'w' ? 'White' : 'Black'} to move`;
+    // Only the flat boards have their legal moves to hand; the spatial ones
+    // move off `envelope` and never compute a full list to test for mate.
+    const outcome = pos.dims > 2 ? null : status(pos);
+    turn.textContent = outcome?.over
+      ? (outcome.reason === 'checkmate'
+        ? `Checkmate — ${outcome.result === 'w' ? 'White' : 'Black'} wins`
+        : 'Stalemate — draw')
+      : `${pos.turn === 'w' ? 'White' : 'Black'} to move${outcome?.check ? ' — check' : ''}`;
     const last = document.createElement('span');
     last.className = 'explorer-last-move';
     const previous = state.history.at(-1);
@@ -110,7 +152,8 @@ function refreshExplorer(pos, lastMove = null) {
     // own. The dialog it opens stays where the viewer put it.
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
-    hud.append(brand, moveDisplay);
+    // Board picker heads the control stack, directly under the game state.
+    hud.append(brand, moveDisplay, els.variant);
     main.append(viewer.element, hud);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
@@ -231,61 +274,15 @@ function newGame(variantId = state.variantId) {
 function refresh() {
   const pos = state.position;
   document.body.classList.toggle('spatial', pos.dims > 2);
-  const inspection = Boolean(pos.variant?.inspectionOnly);
-  document.body.classList.toggle('inspection', inspection);
-  if (inspection) {
-    state.moves = [];
-    refreshExplorer(pos, state.animatingMove ?? null);
-    state.animatingMove = null;
-    return;
-  }
-  // The explorer owns several views now, so it tears itself down.
-  if (explorer) { explorer.destroy(); explorer = null; }
-  els.reset.textContent = 'New game';
-  state.moves = legalMoves(pos);
-
-  const targets = new Map();
-  if (state.selected !== null) {
-    for (const move of state.moves) {
-      if (move.from === state.selected) targets.set(move.to, move);
-    }
-  }
-
-  const checked = inCheck(pos);
-  // Wrapped so the wrapper can carry the square: the file letters then match
-  // the board's width rather than the whole centred area.
-  const wrap = document.createElement('div');
-  wrap.className = pos.dims === 1 ? 'play-board line' : 'play-board';
-  wrap.append(renderBoard(pos, {
-    selected: state.selected,
-    targets,
-    checkIndex: checked ? pos.kingIndex(pos.turn) : null,
-    lastMove: state.history.at(-1)?.move ?? null,
-    onSquare,
-  }));
-  if (pos.dims <= 2) wrap.append(renderCoordinates(pos));
-  els.boardArea.replaceChildren(wrap);
-
-  const state_ = status(pos);
-  els.turn.className = 'turn-token ' + (pos.turn === 'w' ? 'white' : 'black');
-  if (state_.over) {
-    els.status.textContent = state_.reason === 'checkmate'
-      ? `Checkmate — ${state_.result === 'w' ? 'White' : 'Black'} wins`
-      : 'Stalemate — draw';
-  } else {
-    els.status.textContent = `${pos.turn === 'w' ? 'White' : 'Black'} to move${state_.check ? ' — check' : ''}`;
-  }
-
-  els.fen.value = toFen(pos);
-  els.undo.disabled = state.history.length === 0;
-  // 1D and 2D have no left control column, so reset sits beside undo.
-  const gameState = document.querySelector('.game-state');
-  if (gameState && !gameState.contains(els.undo)) {
-    gameState.append(els.undo, els.reset);
-  } else {
-    els.undo.parentElement?.append(els.reset);
-  }
-  renderHistory();
+  // One shell for every variant now. 1D and 2D dock a DOM board where the
+  // canvas goes and inherit the same HUD, toolbar and history around it, so
+  // `inspection` is really just "the explorer layout" and is always on.
+  document.body.classList.add('inspection');
+  // The spatial path picks its destinations off `envelope`; only the flat
+  // boards need a real legal-move list, for their targets and promotions.
+  state.moves = pos.dims > 2 ? [] : legalMoves(pos);
+  refreshExplorer(pos, state.animatingMove ?? null);
+  state.animatingMove = null;
 }
 
 function renderHistory() {
@@ -418,8 +415,12 @@ function loadFromField() {
   }
 }
 
-const ALLOWED_VARIANTS = new Set(['3d-4', '3d', '4d-4', '4d']);
-const VARIANT_LABELS = { '3d-4': '4³ board', '3d': '8³ board', '4d-4': '4⁴ board', '4d': '8⁴ board' };
+const ALLOWED_VARIANTS = new Set(['1d', '2d', '3d', '4d-4', '4d']);
+const VARIANT_LABELS = {
+  '1d': '1D - 8 strip', '2d': '2D - 8² board',
+  '3d': '3D - 8³ board',
+  '4d-4': '4D - 4⁴ board', '4d': '4D - 8⁴ board',
+};
 for (const [id, variant] of Object.entries(VARIANTS)) {
   if (!ALLOWED_VARIANTS.has(id)) continue;
   const option = document.createElement('option');

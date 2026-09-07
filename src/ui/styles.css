@@ -518,6 +518,14 @@ dialog::backdrop { background: #0007; }
 
 /* Containing block for anything the main view pins over its canvas. */
 .explorer-main { position: relative; }
+/* 1D and 2D dock their DOM board where the canvas goes: centred in the same
+   space, and sized off the viewport height the way the lattice is. */
+.explorer-main > .play-board {
+  margin: auto;
+  align-self: center;
+  width: min(100%, calc(100vh - 120px));
+}
+.explorer-main > .play-board.line { width: min(100%, 1000px); }
 /* Everything that rides on the view rather than in a panel, stacked in one
    corner: the title, then the game state under it. */
 .explorer-hud {
@@ -644,28 +652,19 @@ body:not(.inspection) .layout { height: calc(100vh - 86px); }
 body:not(.inspection) .layout { height: calc(100vh - 46px); }
 .play-board { width: min(100%, calc(100vh - 128px)); }
 
-/* The variant picker floats centred over the scene, with no bar behind it.
-   Only the control itself takes pointer events, so the rest of that strip
-   stays draggable for orbiting. */
-#variant-dock {
-  position: fixed;
-  top: 12px;
-  left: 0;
-  right: 0;
-  z-index: 20;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-#variant-dock select {
+/* The board picker sits at the head of the control stack, so it is sized and
+   filled like the groups beneath it. The HUD around it is click-through, so
+   this has to opt back in. */
+#variant {
   pointer-events: auto;
-  min-height: 32px;
-  padding: 5px 30px 5px 12px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 12px;
   font-size: 13px;
-  background-color: color-mix(in srgb, var(--panel) 78%, transparent);
+  font-weight: 600;
+  background-color: color-mix(in srgb, var(--panel) 86%, transparent);
   backdrop-filter: blur(8px);
 }
-/* Keep the top of each view clear of the floating picker. */
 .explorer-shell { height: calc(100vh - 66px); margin-top: 14px; }
 body:not(.inspection) .layout { height: calc(100vh - 60px); margin-top: 14px; }
 .play-board { width: min(100%, calc(100vh - 142px)); }
@@ -692,7 +691,6 @@ body:not(.inspection) main { padding: 12px 22px 22px; }
   .inspection .layout > section,
   .inspection #board-area { width: 100%; height: 100%; min-height: 0; }
   .explorer-shell { height: 100%; min-height: 0; margin: 0; gap: 0; }
-  .inspection:has(.explorer-side:not([hidden])) #variant-dock { right: 380px; }
   .explorer-main,
   .explorer-main > .cube-view,
   .explorer-main .cube-canvas { height: 100%; min-height: 0; }

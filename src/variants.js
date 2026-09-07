@@ -149,7 +149,10 @@ export const VARIANTS = {
     start: '8x8 rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
   },
   '3d-4': cubeVariant(4),
-  '3d': cubeVariant(8),
+  // Eight layers stack twice as tall as four, so this one board halves the
+  // vertical step to keep them in frame. Declared here rather than inferred
+  // from the shape, so no other board is affected by it.
+  '3d': { ...cubeVariant(8), verticalSpacing: .5 },
   '4d-4': hypercubeVariant(4),
   '4d': hypercubeVariant(8),
 };
