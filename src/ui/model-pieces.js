@@ -1,43 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
 // Original king is 8.96 units high. One shared scale preserves the set's proportions.
 const MODEL_SCALE = .09;
-// A selected square appears in every cell that holds a copy of it, so the rim
-// needs as many instances as the halo has points.
-const OUTLINE_MAX = 8;
-// Object-space units, pushed along the surface normal. Every type shares one
-// MODEL_SCALE, so a fixed offset here is a fixed width for pawn and king alike
-// -- which growing the hull by a percentage would not give.
-const OUTLINE_WIDTH = .34;
-
-// An inverted hull: the same mesh grown along its normals, back faces only, so
-// the piece itself covers all of it but the rim. Cheaper than a postprocessing
-// pass and, unlike one, it follows individual instances.
-function outlineShader(shader) {
-  shader.uniforms.uOutline = { value: OUTLINE_WIDTH };
-  shader.vertexShader = `uniform float uOutline;\n${shader.vertexShader}`.replace(
-    '#include <begin_vertex>',
-    '#include <begin_vertex>\n\ttransformed += normalize(normal) * uOutline;',
-  );
-}
-
-// Welded by position alone, then re-normalled smooth. The source meshes split
-// vertices at hard edges, and a hull grown along split normals tears open at
-// every one of them.
-function hullOf(geometry) {
-  const seam = new THREE.BufferGeometry();
-  seam.setAttribute('position', geometry.getAttribute('position').clone());
-  if (geometry.index) seam.setIndex(geometry.index.clone());
-  const hull = mergeVertices(seam);
-  seam.dispose();
-  hull.computeVertexNormals();
-  return hull;
-}
-
-// Module-level cache for parsed geometries and hulls to avoid asynchronous
+// Module-level cache for parsed geometries to avoid asynchronous
 // reloading and flickering fallback glyphs when moving pieces or rebuilding views.
 const geometryCache = new Map();
 const loadingPromises = new Map();
@@ -66,8 +33,7 @@ function loadPieceGeometry(type) {
     gltf.scene.updateMatrixWorld(true);
     source.geometry.applyMatrix4(source.matrixWorld);
     (Array.isArray(source.material) ? source.material : [source.material]).forEach(m => m.dispose());
-    const hull = hullOf(source.geometry);
-    const entry = { geometry: source.geometry, hull };
+    const entry = { geometry: source.geometry };
     geometryCache.set(type, entry);
     return entry;
   })();
@@ -80,7 +46,7 @@ for (const type of Object.keys(FILES)) {
   loadPieceGeometry(type).catch(() => {});
 }
 
-export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d') {
+export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d', turn = null) {
   const material = new THREE.MeshStandardMaterial({ roughness: .24, metalness: .04, envMapIntensity: .72 });
   const ghostMaterial = new THREE.MeshStandardMaterial({
     roughness: .3, metalness: .03, envMapIntensity: .6,
@@ -108,8 +74,9 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     opacity: 0.32,
     depthWrite: false,
   });
-  const outlineMaterial = new THREE.MeshBasicMaterial({ color: outlineColor, side: THREE.BackSide });
-  outlineMaterial.onBeforeCompile = outlineShader;
+  // These meshes write nothing in the beauty pass. OutlinePass temporarily
+  // replaces their material to render a mask for only the chosen instances.
+  const outlineMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
   const groups = new Map();
   let disposed = false;
   const ambient = new THREE.HemisphereLight('#fff8e9', '#637365', 2);
@@ -144,7 +111,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     return mesh;
   };
 
-  const initGroup = (type, geometry, hull) => {
+  const initGroup = (type, geometry) => {
     const slots = instances.flatMap((inst, index) =>
       pieceAt(inst.lattice).toLowerCase() === type ? [index] : []);
     if (!slots.length) return;
@@ -152,12 +119,11 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     const ghosts = slots.filter(slot => !instances[slot].home);
     groups.set(type, {
       geometry,
-      hull,
       solid: { mesh: colour(makeMesh(homes.length, material, geometry, 2), homes), slots: homes },
       ghost: { mesh: colour(makeMesh(ghosts.length, ghostMaterial, geometry, 1), ghosts), slots: ghosts },
       captureSolid: { mesh: makeMesh(homes.length, captureMaterial, geometry, 3), slots: homes },
       captureGhost: { mesh: makeMesh(ghosts.length, captureGhostMaterial, geometry, 2), slots: ghosts },
-      outline: makeMesh(Math.min(OUTLINE_MAX, slots.length), outlineMaterial, hull, 1),
+      outline: makeMesh(slots.length, outlineMaterial, geometry, 1),
     });
   };
 
@@ -165,7 +131,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   for (const type of Object.keys(FILES)) {
     if (geometryCache.has(type)) {
       const cached = geometryCache.get(type);
-      initGroup(type, cached.geometry, cached.hull);
+      initGroup(type, cached.geometry);
     }
   }
 
@@ -173,10 +139,10 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     const slots = instances.flatMap((inst, index) =>
       pieceAt(inst.lattice).toLowerCase() === type ? [index] : []);
     if (!slots.length) return;
-    const { geometry, hull } = await loadPieceGeometry(type);
+    const { geometry } = await loadPieceGeometry(type);
     if (disposed) return;
     if (!groups.has(type)) {
-      initGroup(type, geometry, hull);
+      initGroup(type, geometry);
     }
   });
   Promise.allSettled(loads).then(results => {
@@ -188,30 +154,27 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
 
   function writeOutlines() {
     for (const group of groups.values()) {
-      if (group.outline) group.outline.visible = false;
+      if (!group.outline) continue;
+      group.outline.visible = false;
+      if (!enabled) continue;
+      let n = 0;
+      for (const part of [group.solid, group.ghost]) {
+        if (!part.mesh) continue;
+        part.slots.forEach((slot, i) => {
+          const lattice = instances[slot].lattice;
+          const char = pieceAt(lattice);
+          const color = char === char.toUpperCase() ? 'w' : 'b';
+          if (highlight === null ? color !== turn : lattice !== highlight) return;
+          part.mesh.getMatrixAt(i, scratch);
+          group.outline.setMatrixAt(n++, scratch);
+        });
+      }
+      // Hidden copies inherit their source mesh's zero scale.
+      group.outline.count = n;
+      group.outline.visible = n > 0;
+      group.outline.instanceMatrix.needsUpdate = true;
+      group.outline.boundingSphere = null;
     }
-    if (!enabled || highlight === null) return;
-    const char = pieceAt(highlight);
-    const group = char ? groups.get(char.toLowerCase()) : null;
-    if (!group?.outline) return;
-    const capacity = group.outline.instanceMatrix.count;
-    let n = 0;
-    // Every copy of the square is rimmed, ghosts included: which cells hold a
-    // copy is exactly what a selection is meant to show.
-    for (const part of [group.solid, group.ghost]) {
-      if (!part.mesh) continue;
-      part.slots.forEach((slot, i) => {
-        if (n >= capacity || instances[slot].lattice !== highlight) return;
-        part.mesh.getMatrixAt(i, scratch);
-        group.outline.setMatrixAt(n, scratch);
-        n++;
-      });
-    }
-    // Filtered-out copies carry a zero scale, so their rim collapses with them.
-    group.outline.count = n;
-    group.outline.visible = n > 0;
-    group.outline.instanceMatrix.needsUpdate = true;
-    group.outline.boundingSphere = null;
   }
 
   return {
@@ -235,6 +198,12 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     setHighlight(lattice) {
       highlight = lattice;
       writeOutlines();
+    },
+    outlineTargets() {
+      return [...groups.values()].map(group => group.outline).filter(mesh => mesh?.visible);
+    },
+    outlineColor() {
+      return highlight === null ? '#ffffff' : outlineColor;
     },
     update(on, centers, scales, alphas, visible, capturableSet) {
       lastUpdateArgs = [on, centers, scales, alphas, visible];

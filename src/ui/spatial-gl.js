@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { envelope } from '../core/movegen.js';
 import { squareName, layerName, wName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
@@ -796,7 +799,17 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
     modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
     applyFilters();
-  }, theme.selected);
+  }, theme.selected, pos.turn);
+  const renderPass = new RenderPass(scene, camera);
+  const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
+  outlinePass.edgeStrength = 4;
+  outlinePass.edgeGlow = .65;
+  outlinePass.edgeThickness = 1.4;
+  outlinePass.hiddenEdgeColor.set('#5f6f68');
+  const composer = new EffectComposer(renderer);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.addPass(renderPass);
+  composer.addPass(outlinePass);
 
   // ---- selection halo
   const HALO_MAX = 8;
@@ -1392,6 +1405,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     canvasWidth = width;
     canvasHeight = height;
     renderer.setSize(width, height, false);
+    composer.setSize(width, height);
     perspective.aspect = width / height;
     perspective.updateProjectionMatrix();
     const aspect = width / height;
@@ -1438,6 +1452,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     next.position.copy(camera.position);
     camera = next;
     controls.object = next;
+    renderPass.camera = next;
+    outlinePass.renderCamera = next;
     pointMaterial.uniforms.uPerspective.value = kind === 'perspective' ? 1 : 0;
     controls.update();
     needsRender = true;
@@ -1741,18 +1757,17 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       const sq = capturedToSpawn.square;
       const home = homeSlotOf[sq];
       const captureSlots = is4D
-        ? slots.flatMap((slot, s) => slot.lattice === sq && visible(s) ? [s] : [])
+        ? [home, ...slots.flatMap((slot, s) => slot.lattice === sq && s !== home && visible(s) ? [s] : [])]
         : [home];
       const spawnedAt = [];
       for (const s of captureSlots) {
-        if (s < 0) continue;
+        if (s < 0 || !visible(s)) continue;
         const capX = is4D ? positions[s * 3] : latticeFolded[sq * 3];
         const capY = is4D ? positions[s * 3 + 1] : latticeFolded[sq * 3 + 1];
         const capZ = is4D ? positions[s * 3 + 2] : latticeFolded[sq * 3 + 2];
         // Folded clones occupy the same point. Emit once there, then fan out
         // naturally as unfolding gives each cell copy a distinct position.
         if (spawnedAt.some(([x, y, z]) => Math.hypot(capX - x, capY - y, capZ - z) < 0.001)) continue;
-        spawnedAt.push([capX, capY, capZ]);
         const capScale = is4D ? (pointSize[s] / basePointSize) : 1;
         let capOpacity = 1;
         if (is4D && s !== home) {
@@ -1765,6 +1780,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         }
         if (capOpacity > 0.01) {
           modelPieces.spawnTossed(capturedToSpawn.char, [capX, capY, capZ], capScale, capOpacity);
+          spawnedAt.push([capX, capY, capZ]);
         }
       }
       capturedToSpawn = null;
@@ -1802,7 +1818,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
     if (controls.update() || needsRender) {
       updateAxisLabels();
-      renderer.render(scene, camera);
+      outlinePass.selectedObjects = modelPieces.outlineTargets();
+      outlinePass.visibleEdgeColor.set(modelPieces.outlineColor());
+      composer.render();
       needsRender = false;
     }
   }
@@ -2023,6 +2041,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       atlas?.texture.dispose();
       skyTexture?.dispose();
       modelPieces.dispose();
+      outlinePass.dispose();
+      composer.dispose();
       renderer.dispose();
     },
   };
