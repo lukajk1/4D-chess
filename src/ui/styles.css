@@ -490,16 +490,16 @@ dialog::backdrop { background: #0007; }
   z-index: 4;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 203px;
-  padding: 11px 15px;
-  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  backdrop-filter: blur(7px);
+  gap: 4px;
+  min-width: 300px;
+  padding: 0;
   pointer-events: none;
+  text-shadow:
+    0 0 3px var(--panel),
+    0 0 7px var(--panel),
+    0 2px 5px rgb(0 0 0 / .58);
 }
-.explorer-turn { display: flex; align-items: center; gap: 9px; font-size: 18px; }
+.explorer-turn { display: flex; align-items: center; gap: 12px; font-size: 27px; }
 .explorer-turn::before {
   content: '';
   width: 12px;
@@ -509,7 +509,10 @@ dialog::backdrop { background: #0007; }
   background: #fffdf6;
 }
 .explorer-turn[data-turn="b"]::before { background: #2a2f27; }
-.explorer-last-move { color: var(--muted); font: 15px/1.4 ui-monospace, 'Cascadia Mono', monospace; }
+.explorer-last-move {
+  color: color-mix(in srgb, var(--ink) 74%, var(--muted));
+  font: 22.5px/1.4 ui-monospace, 'Cascadia Mono', monospace;
+}
 
 /* Segmented controls: both options visible, one click to switch. */
 .control { display: flex; flex-direction: column; gap: 5px; }

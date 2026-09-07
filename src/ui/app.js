@@ -4,6 +4,11 @@ import { toFen, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
+import { audioCues, unlockAudio } from './audio.js';
+
+// Unlock on gestures before a move is submitted, including keyboard play.
+document.addEventListener('pointerdown', unlockAudio, { passive: true });
+document.addEventListener('keydown', unlockAudio);
 
 const els = {
   variant: document.querySelector('#variant'),
@@ -349,6 +354,8 @@ export function submitMove(move) {
     captured: submitted.captured,
   };
   state.position = makeMove(position, submitted);
+  if (submitted.captured || submitted.ep) audioCues.capture();
+  else audioCues.move();
   state.selected = null;
   refresh();
   return true;
