@@ -805,7 +805,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   outlinePass.edgeStrength = 4;
   outlinePass.edgeGlow = .65;
   outlinePass.edgeThickness = 1.4;
-  outlinePass.hiddenEdgeColor.set('#5f6f68');
+  // OutlinePass normally draws occluded edges in a second, muted colour.
+  // Black contributes nothing under its additive blend, so solid scene depth
+  // fully hides those edges while exposed silhouettes retain their glow.
+  outlinePass.hiddenEdgeColor.set('#000000');
   const composer = new EffectComposer(renderer);
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.addPass(renderPass);
@@ -1820,6 +1823,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       updateAxisLabels();
       outlinePass.selectedObjects = modelPieces.outlineTargets();
       outlinePass.visibleEdgeColor.set(modelPieces.outlineColor());
+      outlinePass.edgeStrength = modelPieces.outlineStrength();
       composer.render();
       needsRender = false;
     }

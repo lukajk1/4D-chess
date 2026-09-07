@@ -205,6 +205,9 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     outlineColor() {
       return highlight === null ? '#ffffff' : outlineColor;
     },
+    outlineStrength() {
+      return highlight === null ? 1.5 : 4;
+    },
     update(on, centers, scales, alphas, visible, capturableSet) {
       lastUpdateArgs = [on, centers, scales, alphas, visible];
       enabled = on;
