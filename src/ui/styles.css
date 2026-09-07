@@ -66,13 +66,17 @@
 .explorer-slices { min-width: 0; width: 100%; }
 .cube-axes line { stroke: var(--muted); stroke-width: 1.5; }
 .cube-axes text { fill: var(--muted); font-size: 13px; }
+/* Sits under the last-move line, inheriting that block's shadow and its
+   click-through, so it needs no positioning or legibility work of its own. */
 .cube-caption {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  z-index: 2; pointer-events: none;
-  margin: 0; max-width: calc(100% - 240px); text-align: center;
-  font: 12px/1.5 ui-monospace, monospace;
-  /* Reads over the lattice without a panel behind it. */
-  text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
+  margin: 0;
+  font: 12px/1.45 ui-monospace, 'Cascadia Mono', monospace;
+  color: color-mix(in srgb, var(--ink) 62%, var(--muted));
+  /* One line, always. The height is held open whether or not anything is
+     selected so picking a piece cannot shove the control groups down, and the
+     readout is kept off a second line so one is all it ever needs. */
+  min-height: 1.45em;
+  white-space: nowrap;
 }
 .axis-label-layer {
   position: absolute;
@@ -320,21 +324,27 @@ dialog {
   padding: 20px;
 }
 dialog::backdrop { background: #0007; }
+/* Sits under the byline in the brand block, matching it. The HUD around it is
+   click-through, so this has to opt back in to being clickable. */
 .credit-link {
-  position: absolute;
-  right: 18px;
-  bottom: 14px;
-  z-index: 5;
+  align-self: flex-start;
+  pointer-events: auto;
   min-height: 0;
+  margin-top: 2px;
   border: 0;
   padding: 0;
   background: none;
   color: var(--muted);
   font: 12px/1.5 system-ui, -apple-system, sans-serif;
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
   cursor: pointer;
-  text-shadow: 0 0 7px var(--bg), 0 0 7px var(--bg), 0 0 3px var(--bg);
+  /* The same shadow the rest of the HUD carries, stated rather than inherited
+     so a form control cannot lose it to a UA default. */
+  text-shadow:
+    0 0 3px var(--panel),
+    0 0 7px var(--panel),
+    0 2px 5px rgb(0 0 0 / .58);
 }
 .credit-link:hover { color: var(--accent); }
 .asset-credit { width: min(420px, calc(100vw - 32px)); line-height: 1.6; }
@@ -363,27 +373,7 @@ dialog::backdrop { background: #0007; }
 .cube-explorer-4d .explorer-slices { border-top: 1px solid var(--line); padding-top: 22px; }
 .cube-explorer-4d .slices { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
-.cube-grid-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-.cube-grid-panel .hint { margin: 10px 0 0; }
-
-/* The canvas covers the whole grid; each cell supplies one scissored
-   viewport, so eight cubes cost one WebGL context between them. */
-.cube-grid { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
-.cube-cell { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 10px; border-left: 3px solid var(--w-color); transition: border-color .15s, background .15s; }
-.cube-cell.active { border-color: var(--selected); background: color-mix(in srgb, var(--selected) 9%, transparent); }
-.cube-cell-label { position: absolute; top: 7px; left: 10px; z-index: 2; pointer-events: none; color: var(--muted); font: 11px ui-monospace, monospace; }
-.cube-cell.active .cube-cell-label { color: var(--ink); }
-.cube-grid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; touch-action: none; cursor: grab; }
-.cube-grid-canvas:active { cursor: grabbing; }
-.reset-grid { font-size: 12px; white-space: nowrap; }
-
-@media (max-width: 900px) { .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cube-explorer-4d .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-/* Cell roles: the interior and outer cubes read differently from the six
-   face cells that join them. */
-.cube-cell.role-interior { border-style: dashed; }
-.cube-cell.role-outer { border-width: 2px; }
-.cube-cell-label em { font-style: normal; opacity: .65; }
+@media (max-width: 900px) { .cube-explorer-4d .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* Explorer shell: the spatial view fills the window and the other views dock
    beside it on demand. Overrides the stacked layout above. */
@@ -401,7 +391,6 @@ dialog::backdrop { background: #0007; }
 .explorer-side { flex: 0 0 380px; overflow-y: auto; overscroll-behavior: contain; }
 .side-panel + .side-panel { margin-top: 16px; }
 /* A 380px column is too narrow for the wide grids used at full width. */
-.explorer-side .cube-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .explorer-side .slices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .explorer-side .cube-view { position: static; }
 
@@ -417,8 +406,7 @@ dialog::backdrop { background: #0007; }
 .inspection .game-state { display: none; }
 .inspection main { padding-top: 12px; }
 
-.explorer-main > .cube-view,
-.explorer-side .cube-grid-panel {
+.explorer-main > .cube-view {
   border: 0;
   background: none;
   border-radius: 0;
@@ -438,16 +426,63 @@ dialog::backdrop { background: #0007; }
 
 /* Controls dock as a left column, stacked rather than strung across the top,
    which gives the canvas the full width and height between the two asides. */
+/* Rides on the view beneath the game state rather than taking a column of its
+   own. Only this subtree takes pointer events, so the lattice behind the rest
+   of the HUD stays draggable. */
 .explorer-controls {
-  flex: 0 0 210px;
+  flex: 1 1 auto;
+  min-height: 0;
+  pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-right: 1px solid var(--line);
-  padding-right: 16px;
+  padding-right: 6px;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent;
 }
-.explorer-brand { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 22px; }
+/* Collapsible control groups. <details> supplies the open/closed state, the
+   keyboard handling and the toggling; only the marker is restyled.
+
+   The border wraps the whole element, so it reads as a button when shut and
+   grows into a panel when open, with the summary staying its header. Matches
+   the button rule's 1px line and 6px radius rather than inventing its own. */
+.control-group {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  /* Sits over the lattice, so the fill is translucent and blurred the way the
+     variant picker's is rather than a flat panel. */
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: blur(8px);
+}
+.control-group > summary {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 38px; padding: 7px 12px;
+  cursor: pointer; list-style: none;
+  color: var(--ink); font-size: 13px; font-weight: 600; user-select: none;
+}
+.control-group > summary::-webkit-details-marker { display: none; }
+.control-group > summary::after {
+  content: '';
+  margin-left: auto;
+  width: 7px; height: 7px;
+  border-right: 1.6px solid var(--muted);
+  border-bottom: 1.6px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform .15s;
+}
+.control-group[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+/* Hover reads on the whole control, the way it does on a button. */
+.control-group:has(> summary:hover) { border-color: var(--accent); }
+.control-group > summary:hover { color: var(--accent); }
+.control-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A rule under the header, so an open group looks like a panel with a title
+   rather than one tall box. */
+.control-group[open] > summary { border-bottom: 1px solid var(--line); }
+.control-group-body {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 13px; padding: 13px 12px 15px;
+}
+
+.explorer-brand { display: flex; flex-direction: column; align-items: flex-start; margin: 0; }
 .explorer-brand strong { font-size: clamp(26px, 2.1vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
 .explorer-brand a { margin-top: 4px; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .explorer-controls::-webkit-scrollbar { width: 8px; }
@@ -462,19 +497,19 @@ dialog::backdrop { background: #0007; }
   background-color: color-mix(in srgb, var(--muted) 62%, transparent);
 }
 .explorer-controls .cube-controls { display: flex; flex-direction: column; align-items: stretch; gap: 13px; border-bottom: 0; padding: 0; }
-.explorer-controls .cube-controls > label { flex-direction: column; align-items: stretch; gap: 5px; }
+.explorer-controls .control-group-body > label { flex-direction: column; align-items: stretch; gap: 5px; }
 .explorer-controls .cube-controls select,
 .explorer-controls .cube-controls input[type=range] { width: 100%; }
-/* A checkbox and its text still belong on one line. */
-.explorer-controls .piece-toggle { flex-direction: row; align-items: center; }
 .explorer-controls .unfold { width: 100%; }
 .explorer-controls .zoom-level { text-align: left; }
 .explorer-controls .explorer-toolbar { margin: 2px 0 0; flex-direction: column; align-items: stretch; gap: 6px; }
 
 @media (max-width: 900px) {
-  .explorer-controls { flex: none; width: 100%; border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 14px; }
+  .explorer-controls { width: 100%; padding: 0 0 14px; }
   .explorer-controls .cube-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
-  .explorer-controls .cube-controls > label { flex-direction: row; align-items: center; gap: 7px; }
+  .explorer-controls .control-group { flex: 1 1 100%; }
+  .explorer-controls .control-group-body { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+  .explorer-controls .control-group-body > label { flex-direction: row; align-items: center; gap: 7px; }
   .explorer-controls .cube-controls select,
   .explorer-controls .cube-controls input[type=range] { width: auto; }
   .explorer-controls .unfold { width: auto; }
@@ -483,21 +518,30 @@ dialog::backdrop { background: #0007; }
 
 /* Containing block for anything the main view pins over its canvas. */
 .explorer-main { position: relative; }
-.explorer-move-display {
+/* Everything that rides on the view rather than in a panel, stacked in one
+   corner: the title, then the game state under it. */
+.explorer-hud {
   position: absolute;
   top: 14px;
   left: 16px;
+  bottom: 14px;
   z-index: 4;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 300px;
-  padding: 0;
+  gap: 16px;
+  width: var(--explorer-controls-width, 292px);
   pointer-events: none;
   text-shadow:
     0 0 3px var(--panel),
     0 0 7px var(--panel),
     0 2px 5px rgb(0 0 0 / .58);
+}
+.explorer-move-display {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 300px;
+  padding: 0;
 }
 .explorer-turn { display: flex; align-items: center; gap: 12px; font-size: 27px; }
 .explorer-turn::before {
@@ -541,20 +585,6 @@ dialog::backdrop { background: #0007; }
 .rotation-input-row { display: flex; align-items: center; gap: 8px; }
 .explorer-controls .rotation-input-row .rotation-slider { flex: 1; width: auto; min-width: 0; }
 .plane-rotation-toggle { flex: 0 0 58px; min-height: 30px; padding: 4px 8px; font-size: 11px; }
-
-/* The column rule stacks label above control, which is wrong for a checkbox
-   and its text. Needs the element qualifier to outrank `> label`, and an
-   explicit width so `align-items: stretch` cannot blow the box up. */
-.explorer-controls .cube-controls > label.piece-toggle {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-.explorer-controls .cube-controls > label.piece-toggle input {
-  flex: none;
-  width: 16px;
-  height: 16px;
-}
 
 /* 1D and 2D fill the window like the explorer does, keeping the DOM board
    rendering they already have: the square grid for 2D, the point line for 1D. */
@@ -662,8 +692,6 @@ body:not(.inspection) main { padding: 12px 22px 22px; }
   .inspection .layout > section,
   .inspection #board-area { width: 100%; height: 100%; min-height: 0; }
   .explorer-shell { height: 100%; min-height: 0; margin: 0; gap: 0; }
-  .explorer-controls { flex-basis: var(--explorer-controls-width); padding: 16px; }
-  .inspection #variant-dock { left: var(--explorer-controls-width); }
   .inspection:has(.explorer-side:not([hidden])) #variant-dock { right: 380px; }
   .explorer-main,
   .explorer-main > .cube-view,

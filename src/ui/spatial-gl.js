@@ -62,18 +62,26 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   root.innerHTML = `
     <div class="cube-heading"><div><span class="eyebrow">${is4D ? '4D → 3D → 2D' : 'Spatial view'}</span><h2>${is4D ? 'One tesseract, eight cells.' : 'Eight layers. One space.'}</h2></div><button class="reset-camera">Reset view</button></div>
     <div class="cube-controls">
+      <details class="control-group">
+        <summary>Display options</summary>
+        <div class="control-group-body">
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
       ${is4D ? segmented('Cell shape', 'Cell shape', [['even', 'Even height'], ['cube', 'Cube']], 'even') : ''}
-      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['cell', 'By cell'], ['w', 'By w-layer']], 'board') : ''}
+      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['w', 'By w-layer']], 'board') : ''}
       ${segmented('Space style', 'Space style', [['opaque', 'Opaque'], ['squares', 'Translucent'], ['verts', 'Points']], 'opaque')}
       ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
       ${segmented('Square notation', 'Square notation', [['on', 'On'], ['off', 'Off']], 'off')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
-      ${is4D ? '<label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>' : ''}
       ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
-      ${is4D ? `<div class="control">
+        </div>
+      </details>
+      ${is4D ? `<details class="control-group">
+        <summary>Space manipulation</summary>
+        <div class="control-group-body">
+      <label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>
+      <div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
       </div>
@@ -86,7 +94,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         </div>
       </div>`).join('')}
       <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Play 4D rotation</button>
-      <button class="reset-rotations" type="button">Reset all rotations</button>` : ''}
+      <button class="reset-rotations" type="button">Reset all rotations</button>
+        </div>
+      </details>` : ''}
     </div>`;
 
   const canvas = document.createElement('canvas');
@@ -96,8 +106,8 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   canvas.setAttribute('aria-label', `${pos.dims}D chess lattice. Drag to orbit, right-drag to pan, scroll to zoom, and click a piece or space.`);
   root.append(canvas);
 
-  // Floats over the canvas rather than sitting under it, centred along the
-  // bottom edge, so nothing crops the view.
+  // Created here but docked by the shell, which puts it under the move
+  // readout. Written to by index, so it does not care where it ends up.
   const caption = document.createElement('p');
   caption.className = 'cube-caption';
   caption.setAttribute('aria-live', 'polite');
@@ -133,7 +143,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   root.append(axisLabelLayer, caption, creditLink, creditDialog);
 
   // ---- three.js scene
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  // No `antialias` here: it only applies to the default framebuffer, and every
+  // frame goes through the composer instead. Multisampling happens on the
+  // composer's target, below.
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
 
@@ -285,9 +298,13 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // runs downward through the lower α/β boards and upward through γ/δ. A
   // clamped ramp preserves that orientation while remaining continuous when
   // a 4D rotation carries geometry across the centre plane.
+  // Both callers reach this whenever the shape is 'even', including in 3D,
+  // where there is no w at all -- and w's contribution is what the two cell
+  // shapes differ by, so in 3D it is simply zero. Without this the arithmetic
+  // runs on undefined and every vertical coordinate comes out NaN.
   const evenHeightAt = (z, w) => {
     const dz = z - center[2];
-    const dw = (w - center[3]) / pos.shape[3];
+    const dw = is4D ? (w - center[3]) / pos.shape[3] : 0;
     const outward = Math.max(-1, Math.min(1, dz / .5));
     return dz + dw * outward;
   };
@@ -823,7 +840,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // Black contributes nothing under its additive blend, so solid scene depth
   // fully hides those edges while exposed silhouettes retain their glow.
   outlinePass.hiddenEdgeColor.set('#000000');
-  const composer = new EffectComposer(renderer);
+  // EffectComposer builds its own target with no samples, which is what left
+  // the tile boxes, the wires and the model silhouettes aliased. Handing it a
+  // multisampled one fixes all three at once -- MSAA belongs to the
+  // framebuffer, so it cannot be aimed at a single material. Drop to 2 samples
+  // if the memory matters; the difference on straight geometric edges is small.
+  const composerTarget = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    samples: 4,
+  });
+  const composer = new EffectComposer(renderer, composerTarget);
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.addPass(renderPass);
   composer.addPass(outlinePass);
@@ -1401,7 +1427,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     const opaqueSquares = latticeMode === 'opaque';
     tileMesh.visible = squareMode;
     tileMaterial.transparent = !opaqueSquares;
-    tileMaterial.uniforms.uOpacity.value = opaqueSquares ? 1 : 0.35;
+    tileMaterial.uniforms.uOpacity.value = opaqueSquares ? 1 : 0.42;
     tileMaterial.uniforms.uOpaque.value = opaqueSquares ? 1 : 0;
     tileMaterial.uniforms.uEnvironmentStrength.value = opaqueSquares && tileMaterial.uniforms.uEnvironment.value ? .1 : 0;
     tileMaterial.depthWrite = opaqueSquares;
@@ -1428,7 +1454,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   function syncModelPieces() {
     modelPieces.update(pieceMode === 'meshes' && showPieces, pieceCenters, pieceScale, pieceAlpha,
-      (inst) => visible(inst.slot), capturable);
+      (inst) => visible(inst.slot), capturable, latticeMode !== 'verts');
   }
 
   let canvasWidth = 0;

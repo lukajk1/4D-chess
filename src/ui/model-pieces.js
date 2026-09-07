@@ -78,6 +78,31 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // These meshes write nothing in the beauty pass. OutlinePass temporarily
   // replaces their material to render a mask for only the chosen instances.
   const outlineMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  const contactGeometry = new THREE.CircleGeometry(1, 24);
+  const contactMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vec4 localPosition = vec4(position, 1.0);
+        #ifdef USE_INSTANCING
+          localPosition = instanceMatrix * localPosition;
+        #endif
+        gl_Position = projectionMatrix * modelViewMatrix * localPosition;
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      void main() {
+        float radius = length(vUv - 0.5) * 2.0;
+        float occlusion = (1.0 - smoothstep(0.08, 1.0, radius)) * 0.24;
+        gl_FragColor = vec4(0.035, 0.05, 0.04, occlusion);
+      }
+    `,
+  });
   const groups = new Map();
   let disposed = false;
   const ambient = new THREE.HemisphereLight('#fff8e9', '#637365', 1.25);
@@ -104,6 +129,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     scene.add(mesh);
     return mesh;
   };
+  const contactShadows = makeMesh(instances.length, contactMaterial, contactGeometry, 2);
   const colour = (mesh, subset) => {
     subset.forEach((slot, i) => {
       const char = pieceAt(instances[slot].lattice);
@@ -209,8 +235,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     outlineStrength() {
       return highlight === null ? 1.5 : 4;
     },
-    update(on, centers, scales, alphas, visible, capturableSet) {
-      lastUpdateArgs = [on, centers, scales, alphas, visible];
+    update(on, centers, scales, alphas, visible, capturableSet, showContacts = true) {
+      lastUpdateArgs = [on, centers, scales, alphas, visible, undefined, showContacts];
       enabled = on;
       if (capturableSet !== undefined) {
         capturable = capturableSet instanceof Set ? capturableSet : new Set(capturableSet ?? []);
@@ -235,12 +261,35 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
             const s = (match && visible(instances[slot])) ? scales[slot] * MODEL_SCALE * emergence : 0;
             transform.scale.setScalar(s);
             const char = pieceAt(lat);
-            transform.rotation.y = char === char.toUpperCase() ? 0 : Math.PI;
+            transform.rotation.set(0, char === char.toUpperCase() ? 0 : Math.PI, 0);
             transform.updateMatrix();
             mesh.setMatrixAt(i, transform.matrix);
           });
           mesh.instanceMatrix.needsUpdate = true;
           mesh.boundingSphere = null;
+        }
+      }
+      let contactCount = 0;
+      if (contactShadows) {
+        contactShadows.visible = on && showContacts;
+        if (contactShadows.visible) {
+          instances.forEach((inst, slot) => {
+            const type = pieceAt(inst.lattice).toLowerCase();
+            if (!groups.has(type) || !visible(inst)) return;
+            const emergence = inst.home ? 1 : Math.min(1, alphas[slot] / .3);
+            const radius = scales[slot] * .2 * emergence;
+            if (radius <= .001) return;
+            transform.position.fromArray(centers, slot * 3);
+            transform.position.y += .003;
+            transform.rotation.set(-Math.PI / 2, 0, 0);
+            transform.scale.setScalar(radius);
+            transform.updateMatrix();
+            contactShadows.setMatrixAt(contactCount++, transform.matrix);
+          });
+          contactShadows.count = contactCount;
+          contactShadows.visible = contactCount > 0;
+          contactShadows.instanceMatrix.needsUpdate = true;
+          contactShadows.boundingSphere = null;
         }
       }
       writeOutlines();
@@ -317,6 +366,12 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
           part.mesh.dispose();
         }
       }
+      if (contactShadows) {
+        scene.remove(contactShadows);
+        contactShadows.dispose();
+      }
+      contactGeometry.dispose();
+      contactMaterial.dispose();
       material.dispose();
       ghostMaterial.dispose();
       captureMaterial.dispose();

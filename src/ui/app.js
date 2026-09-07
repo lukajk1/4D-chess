@@ -94,18 +94,33 @@ function refreshExplorer(pos, lastMove = null) {
       ? `Last: ${colorOf(previous.move.piece) === 'w' ? 'White' : 'Black'} ${displayMove(previous.position.shape, previous.move)}`
       : 'Last: —';
     moveDisplay.append(turn, last);
-    main.append(viewer.element, moveDisplay);
-    const side = document.createElement('aside');
-    side.className = 'explorer-side';
-    side.hidden = true;
-    // Controls dock on the left, optional views on the right, canvas between.
-    const controlsPanel = document.createElement('aside');
-    controlsPanel.className = 'explorer-controls';
+    // The square readout is game state too, so it joins the turn and the last
+    // move rather than floating over the board by itself. The viewer keeps its
+    // own reference and goes on writing to it wherever it ends up.
+    const caption = viewer.element.querySelector('.cube-caption');
+    if (caption) moveDisplay.append(caption);
+    // Title and game state ride on the view itself, alongside the asset
+    // credits, so the control column is nothing but controls.
+    const hud = document.createElement('div');
+    hud.className = 'explorer-hud';
     const brand = document.createElement('header');
     brand.className = 'explorer-brand';
     brand.innerHTML = '<strong>4D chess</strong><a role="link" aria-disabled="true">created by lukajk</a>';
-    controlsPanel.append(brand);
-    shell.append(controlsPanel, main, side);
+    // Attribution belongs with the byline rather than off in a corner of its
+    // own. The dialog it opens stays where the viewer put it.
+    const credit = viewer.element.querySelector('.credit-link');
+    if (credit) brand.append(credit);
+    hud.append(brand, moveDisplay);
+    main.append(viewer.element, hud);
+    const side = document.createElement('aside');
+    side.className = 'explorer-side';
+    side.hidden = true;
+    // Controls ride on the view under the game state, optional views dock on
+    // the right, and the canvas spans everything behind them.
+    const controlsPanel = document.createElement('aside');
+    controlsPanel.className = 'explorer-controls';
+    hud.append(controlsPanel);
+    shell.append(main, side);
 
     // Which auxiliary views this position offers. Views that only make sense
     // in one dimension live in their own modules and are simply absent from
@@ -403,8 +418,8 @@ function loadFromField() {
   }
 }
 
-const ALLOWED_VARIANTS = new Set(['4d-4', '4d']);
-const VARIANT_LABELS = { '4d-4': '4⁴ board', '4d': '8⁴ board' };
+const ALLOWED_VARIANTS = new Set(['3d-4', '3d', '4d-4', '4d']);
+const VARIANT_LABELS = { '3d-4': '4³ board', '3d': '8³ board', '4d-4': '4⁴ board', '4d': '8⁴ board' };
 for (const [id, variant] of Object.entries(VARIANTS)) {
   if (!ALLOWED_VARIANTS.has(id)) continue;
   const option = document.createElement('option');

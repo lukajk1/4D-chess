@@ -58,32 +58,6 @@ export function tesseractCells(shape) {
   return order.map((id) => cells.find((cell) => cell.id === id));
 }
 
-// Position of a point within its cell's own cube, or -1 when absent.
-export function localIndexIn(cell, shape, index) {
-  const coord = [];
-  let rest = index;
-  for (let a = 0; a < 4; a++) {
-    coord.push(rest % shape[a]);
-    rest = Math.floor(rest / shape[a]);
-  }
-  if (coord[cell.axis] !== cell.at) return -1;
-  let local = 0;
-  let stride = 1;
-  for (let k = 0; k < 3; k++) {
-    local += coord[cell.free[k]] * stride;
-    stride *= cell.size[k];
-  }
-  return local;
-}
-
-// Totals for a lattice of any size: the boundary is everything the eight
-// cells cover between them, the interior everything they miss.
-export function latticeStats(shape) {
-  const total = shape.reduce((a, b) => a * b, 1);
-  const interior = shape.reduce((a, b) => a * Math.max(0, b - 2), 1);
-  return { total, interior, boundary: total - interior };
-}
-
 export const isInterior = (shape, index) => {
   let rest = index;
   for (let a = 0; a < 4; a++) {
