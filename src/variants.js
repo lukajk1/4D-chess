@@ -154,7 +154,10 @@ export const VARIANTS = {
   // from the shape, so no other board is affected by it.
   '3d': { ...cubeVariant(8), verticalSpacing: .5 },
   '4d-4': hypercubeVariant(4),
-  '4d': hypercubeVariant(8),
+  // Eight w cells subdivide each z interval eight ways rather than four, so the
+  // planes crowd; a third again of vertical step separates them. Same knob the
+  // 8-cube uses, and like it, declared only on the board that wants it.
+  '4d': { ...hypercubeVariant(8), verticalSpacing: 1.35 },
 };
 
 export function startPosition(id) {

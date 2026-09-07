@@ -897,8 +897,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) {
     if (((a ^ b) & ((a ^ b) - 1)) === 0) CUBE_EDGES.push(a, b);   // differ in one bit
   }
+  // Walls only: axis 2 is board z, which the projection sends to render-up, so
+  // stopping before it drops the lid and the floor. What is left is a low kerb
+  // standing on the square rather than a closed box sitting over it.
   const CUBE_FACES = [];
-  for (let axis = 0; axis < 3; axis++) {
+  for (let axis = 0; axis < 2; axis++) {
     const bit = 1 << axis;
     const [u, v] = [0, 1, 2].filter((k) => k !== axis).map((k) => 1 << k);
     for (const side of [0, bit]) CUBE_FACES.push(side, side | u, side | u | v, side, side | u | v, side | v);
@@ -932,15 +935,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     depthWrite: false,
     uniforms: { uColor: { value: new THREE.Color(theme.accent) }, uFade: { value: .85 } },
   });
-  // Faint enough that a queen's two hundred cells do not fog the lattice; the
-  // wire carries the read, the fill only says which side of it is inside.
+  // With no lid to look through, the walls can carry the highlight themselves.
+  // DoubleSide because a wall is seen from inside as well as out -- which does
+  // mean near and far walls stack, reading heavier than 60% where they overlap.
   const highlightFillMaterial = new THREE.ShaderMaterial({
     vertexShader: LINE_VERTEX,
     fragmentShader: LINE_FRAGMENT,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: { uColor: { value: new THREE.Color(theme.accent) }, uFade: { value: .1 } },
+    uniforms: { uColor: { value: new THREE.Color(theme.accent) }, uFade: { value: .6 } },
   });
   const highlightWire = new THREE.LineSegments(highlightGeometry, highlightMaterial);
   const highlightFill = new THREE.Mesh(highlightFillGeometry, highlightFillMaterial);
@@ -966,47 +970,34 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   });
   const markers = new THREE.Points(markerGeometry, markerMaterial);
 
-  // Square mode draws one expanded quad per footprint. The fragment shader
-  // cuts an anti-aliased ring from it using screen-space derivatives, retaining
-  // the geometry-based highlight without requiring full-scene MSAA.
+  // Square mode stands a low wall on each footprint: eight vertices, a ring on
+  // the floor and the same ring raised, stitched into four sides. No lid and no
+  // floor, so it reads as a kerb around the square rather than a box over it,
+  // and the board beneath stays legible through the opening.
   const SQUARE_OUTLINE_MAX = HIGHLIGHT_MAX * (is4D ? 8 : 1);
-  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 4 * 3);
-  const squareOutlineEdges = new Float32Array(SQUARE_OUTLINE_MAX * 4 * 2);
-  const squareOutlineIndices = new Uint32Array(SQUARE_OUTLINE_MAX * 6);
+  const SQUARE_WALL_RISE = .076;                 // of a square's own width
+  const squareOutlinePositions = new Float32Array(SQUARE_OUTLINE_MAX * 8 * 3);
+  const squareOutlineIndices = new Uint32Array(SQUARE_OUTLINE_MAX * 24);
   for (let i = 0; i < SQUARE_OUTLINE_MAX; i++) {
-    const v = i * 4;
-    squareOutlineIndices.set([v, v + 1, v + 2, v, v + 2, v + 3], i * 6);
-    squareOutlineEdges.set([-1, -1, 1, -1, 1, 1, -1, 1], i * 8);
+    const v = i * 8;
+    for (let k = 0; k < 4; k++) {
+      const a = v + k;
+      const b = v + (k + 1) % 4;                 // its neighbour round the ring
+      squareOutlineIndices.set([a, b, b + 4, a, b + 4, a + 4], i * 24 + k * 6);
+    }
   }
   const squareOutlineGeometry = new THREE.BufferGeometry();
   squareOutlineGeometry.setAttribute('position', new THREE.BufferAttribute(squareOutlinePositions, 3));
-  squareOutlineGeometry.setAttribute('aEdge', new THREE.BufferAttribute(squareOutlineEdges, 2));
   squareOutlineGeometry.setIndex(new THREE.BufferAttribute(squareOutlineIndices, 1));
   squareOutlineGeometry.setDrawRange(0, 0);
-  const squareOutlineMaterial = new THREE.ShaderMaterial({
+  // DoubleSide because a wall is seen from inside as well as out; near and far
+  // sides therefore stack and read heavier than 60% where they overlap.
+  const squareOutlineMaterial = new THREE.MeshBasicMaterial({
+    color: '#9dffb8',
     transparent: true,
+    opacity: .6,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: { uColor: { value: new THREE.Color('#9dffb8') } },
-    vertexShader: `
-      attribute vec2 aEdge;
-      varying vec2 vEdge;
-      void main() {
-        vEdge = aEdge;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      varying vec2 vEdge;
-      uniform vec3 uColor;
-      void main() {
-        float edgeDistance = max(abs(vEdge.x), abs(vEdge.y));
-        float feather = fwidth(edgeDistance) * 1.25;
-        float ring = smoothstep(0.9203 - feather, 0.9203 + feather, edgeDistance);
-        ring *= 1.0 - smoothstep(1.0 - feather, 1.0, edgeDistance);
-        gl_FragColor = vec4(uColor, ring);
-      }
-    `,
   });
   const squareOutlines = new THREE.Mesh(squareOutlineGeometry, squareOutlineMaterial);
 
@@ -1293,17 +1284,22 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
         const y = positions[s * 3 + 1] + 0.012;
         const z = positions[s * 3 + 2];
         const half = tileScale[s] / 2;
-        const thickness = tileScale[s] * .035;
-        const outer = half + thickness * .15;
+        const outer = half + tileScale[s] * .035 * .15;
+        const rise = tileScale[s] * SQUARE_WALL_RISE;
+        const top = y + rise;
         squareOutlinePositions.set([
           x - outer, y, z - outer,
           x + outer, y, z - outer,
           x + outer, y, z + outer,
           x - outer, y, z + outer,
-        ], n * 12);
+          x - outer, top, z - outer,
+          x + outer, top, z - outer,
+          x + outer, top, z + outer,
+          x - outer, top, z + outer,
+        ], n * 24);
         n++;
       }
-      squareOutlineGeometry.setDrawRange(0, n * 6);
+      squareOutlineGeometry.setDrawRange(0, n * 24);
       squareOutlineGeometry.attributes.position.needsUpdate = true;
       squareOutlineGeometry.computeBoundingSphere();
       squareOutlines.visible = n > 0;
