@@ -3,6 +3,9 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 
 // Extract this uncompressed, texture-free set without re-tessellating its meshes.
+//
+// This overwrites assets/chess/*.glb wholesale, which drops the half turn baked
+// into the knight. Follow it with: node scripts/rotate-piece.js knight
 const source = 'Chess Set by Pia Leung - bfb3C6hpdi0.glb';
 const outDir = 'assets/chess';
 const file = fs.readFileSync(source);

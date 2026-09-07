@@ -68,19 +68,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       ${segmented(is4D ? '3D camera' : 'Projection', 'Projection', [['perspective', 'Perspective'], ['orthographic', 'Ortho']], 'perspective')}
       <label>Background <select aria-label="Background"><option value="page">Page</option><option value="paper">Off-white</option><option value="sky">Sky</option></select></label>
       ${is4D ? segmented('4D \u2192 3D', 'Hyperprojection', [['nested', 'Nested'], ['oblique', 'Oblique']], 'nested') : ''}
-      ${is4D ? segmented('Cell shape', 'Cell shape', [['even', 'Even height'], ['cube', 'Cube']], 'even') : ''}
-      ${is4D ? segmented('Colour', 'Point colouring', [['board', 'Chessboard'], ['w', 'By w-layer']], 'board') : ''}
+      ${is4D ? segmented('Spacing', 'Cell shape', [['even', 'Normalized'], ['cube', 'Cube']], 'even') : ''}
       ${segmented('Space style', 'Space style', [['opaque', 'Opaque'], ['squares', 'Translucent'], ['verts', 'Points']], 'opaque')}
-      ${segmented('Labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
+      ${segmented('Axis labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
       ${segmented('Square notation', 'Square notation', [['on', 'On'], ['off', 'Off']], 'off')}
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
-      ${segmented('Reach', 'Move highlight', [['points', 'Points'], ['cubes', 'Cubes']], 'points')}
         </div>
       </details>
       ${is4D ? `<details class="control-group">
         <summary>Space manipulation</summary>
         <div class="control-group-body">
-      <label>W spacing <input aria-label="W spacing" type="range" min="0.5" max="1.8" step="0.02" value="1"></label>
       <div class="control">
         <span class="control-label">Fold <output class="fold-value">0.00</output></span>
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
@@ -294,6 +291,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   // that differently -- nested moves the 4D camera in, oblique lengthens its
   // step -- so this is a factor rather than a distance, and up means further
   // apart in both.
+  // No control offers this any more, so it stays at 1 and neither projection
+  // is stretched along w. Both still read it, and the state save/restore still
+  // carries it; putting the slider back is one <label> line in the markup.
   let wSpread = 1;
   let cellShape = 'even';
   // Optional per-variant vertical scale. Every path that sets `spacing` goes
@@ -320,7 +320,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const zPlanes = [[0, 2], [1, 2], [2, 3]];
   const TAU = Math.PI * 2;
   const rotationAngles = new Float64Array(3);
-  const rotationSpeeds = [.1496, -.11288, .1904];
+  // XZ, YZ, ZW, all at one rate; YZ differs only in sign, so it counter-turns.
+  // Equal rates mean the three planes stay in step and the combined motion
+  // repeats, where three incommensurate ones would not -- deliberate, so the
+  // turn reads as a single rotation rather than a drift.
+  const rotationSpeeds = [.1496, -.1496, .1496];
   const rotated4 = [0, 0, 0, 0];
   function rotateThroughZPlanes(c) {
     for (let axis = 0; axis < 4; axis++) rotated4[axis] = c[axis] - center[axis];
@@ -1014,9 +1018,15 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
 
   // ---- state
   let targets = [];
+  // No control offers this any more, so reachable squares always show as the
+  // low walls. The 'cubes' reading is still built and still written by
+  // writeHighlights; putting the picker back is one segmented() line above.
   let reachMode = 'points';
   let unfoldT = 0;
   let unfoldTarget = 0;
+  // No control offers this any more, so it stays on the chessboard palette.
+  // The 'w' and 'cell' modes are still handled in applyColors; putting the
+  // picker back is one segmented() line in the markup above.
   let colourMode = 'board';
   let latticeMode = 'opaque';
   let layer = null;

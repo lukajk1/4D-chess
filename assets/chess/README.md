@@ -8,6 +8,12 @@ Six representative white pieces, with original normals and relative scale (mater
 Piece bases are centred at (0, 0, 0), Y up.
 No simplification or remeshing was performed.
 
+`knight.glb` additionally carries a half turn about the vertical axis, baked
+into its POSITION and NORMAL data by `scripts/rotate-piece.js` because the
+original faces the wrong way. Rigid, so nothing was re-tessellated. Regenerating
+with the command below would drop it; re-run `node scripts/rotate-piece.js
+knight` afterwards.
+
 Regenerate from the repository root with: node scripts/split-chess-set.js
 
 | File | Triangles | Bytes |

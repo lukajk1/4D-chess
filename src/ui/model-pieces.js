@@ -11,10 +11,12 @@ const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: '
 // layer, yellow or blue at w = 1 -- so depth reads as colour arriving while the
 // light/dark distinction stays absolute at both ends: yellow is still the light
 // one and blue still the dark one.
-// One palette for everything three.js draws, whatever the page theme is doing.
-// The far end is the dark theme's --light-square and --dark-square: the scene
-// is lit and shaded on its own terms, so it does not follow the page the way
-// the flat 1D and 2D boards do.
+// One palette for everything three.js draws, whatever the page theme is doing:
+// the scene is lit and shaded on its own terms, so it does not follow the page
+// the way the flat 1D and 2D boards do.
+//
+// `far` is the outermost w layer and `near` is w = 1; pieceColorAt lerps from
+// one to the other by depth.
 export const PIECE_COLORS = {
   white: { far: '#b9b3a6', near: '#e0d289' },
   black: { far: '#293620', near: '#26408c' },
