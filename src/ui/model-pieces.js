@@ -2,7 +2,35 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
-export const PIECE_COLORS = { white: '#fff3d8', black: '#34483d' };
+// The two sides' colours, and the only definition of them anywhere: squares
+// take their parity from this same pair, so a white piece and a light square
+// are the same colour at the same depth, and a black piece and a dark square
+// likewise.
+//
+// Each side ramps across w -- plain white or plain black at the outermost
+// layer, yellow or blue at w = 1 -- so depth reads as colour arriving while the
+// light/dark distinction stays absolute at both ends: yellow is still the light
+// one and blue still the dark one.
+// One palette for everything three.js draws, whatever the page theme is doing.
+// The far end is the dark theme's --light-square and --dark-square: the scene
+// is lit and shaded on its own terms, so it does not follow the page the way
+// the flat 1D and 2D boards do.
+export const PIECE_COLORS = {
+  white: { far: '#b9b3a6', near: '#e0d289' },
+  black: { far: '#293620', near: '#26408c' },
+};
+
+const RAMP = {
+  white: [new THREE.Color(PIECE_COLORS.white.far), new THREE.Color(PIECE_COLORS.white.near)],
+  black: [new THREE.Color(PIECE_COLORS.black.far), new THREE.Color(PIECE_COLORS.black.near)],
+};
+
+
+// `depth` runs 0 at the outermost w through to 1 at w = 1.
+export function pieceColorAt(isWhite, depth, out = new THREE.Color()) {
+  const [far, near] = isWhite ? RAMP.white : RAMP.black;
+  return out.copy(far).lerp(near, Math.min(1, Math.max(0, depth)));
+}
 // Original king is 8.96 units high. One shared scale preserves the set's proportions.
 const MODEL_SCALE = .09;
 // Module-level cache for parsed geometries to avoid asynchronous
@@ -47,7 +75,7 @@ for (const type of Object.keys(FILES)) {
   loadPieceGeometry(type).catch(() => {});
 }
 
-export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d', turn = null) {
+export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColor = '#e8c27d', turn = null, depthOf = () => 0) {
   const material = new THREE.MeshStandardMaterial({ roughness: .24, metalness: .04, envMapIntensity: .42 });
   const ghostMaterial = new THREE.MeshStandardMaterial({
     roughness: .3, metalness: .03, envMapIntensity: .6,
@@ -130,10 +158,15 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     return mesh;
   };
   const contactShadows = makeMesh(instances.length, contactMaterial, contactGeometry, 2);
+  // Pieces take the same ramp the squares do, keyed off the square they stand
+  // on, so a piece and its tile always agree on how deep in w they are.
+  const tint = new THREE.Color();
   const colour = (mesh, subset) => {
     subset.forEach((slot, i) => {
-      const char = pieceAt(instances[slot].lattice);
-      mesh?.setColorAt(i, new THREE.Color(char === char.toUpperCase() ? PIECE_COLORS.white : PIECE_COLORS.black));
+      const lattice = instances[slot].lattice;
+      const char = pieceAt(lattice);
+      pieceColorAt(char === char.toUpperCase(), depthOf(lattice), tint);
+      mesh?.setColorAt(i, tint);
     });
     return mesh;
   };

@@ -7,7 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { envelope } from '../core/movegen.js';
 import { squareName, layerName, wName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
-import { createModelPieces, PIECE_COLORS } from './model-pieces.js';
+import { createModelPieces, pieceColorAt } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
 import { isInterior, tesseractCells, hingeTree, unfoldCoord } from './tesseract.js';
 import {
@@ -208,12 +208,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const boardColors = new Float32Array(slotCount * 3);
   const opaqueBoardColors = new Float32Array(slotCount * 3);
   const wColors = new Float32Array(slotCount * 3);
+  // How far in w a square sits: 0 at the outermost layer, 1 at w = 1. A
+  // property of the coordinate, like the w-layer colouring, not of whichever
+  // projection happens to be framing it.
+  const depthAtW = (w) => (is4D ? 1 - w / Math.max(1, pos.shape[3] - 1) : 0);
   slots.forEach((slot, s) => {
     const c = coords[slot.lattice];
     const parity = c.reduce((a, b) => a + b, 0) % 2;
     brighten(scratch.set(parity ? theme.dark : theme.light));
     boardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
-    scratch.set(parity ? PIECE_COLORS.black : PIECE_COLORS.white);
+    pieceColorAt(!parity, depthAtW(c[3] ?? 0), scratch);
     opaqueBoardColors.set([scratch.r, scratch.g, scratch.b], s * 3);
     // In 3D there are no cells, so the brightened board colours stand in.
     if (is4D) scratch.set(slot.cell ? CELL_COLORS[slot.cell.id] : theme.muted);
@@ -834,7 +838,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
     modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
     applyFilters();
-  }, theme.selected, pos.turn);
+  }, theme.selected, pos.turn, (index) => depthAtW(coords[index][3] ?? 0));
   const renderPass = new RenderPass(scene, camera);
   const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
   outlinePass.edgeStrength = 4;
