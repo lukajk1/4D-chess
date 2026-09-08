@@ -5,6 +5,7 @@ import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
 import { audioCues, unlockAudio } from './audio.js';
+import { toast, clearToasts } from './toast.js';
 
 // Unlock on gestures before a move is submitted, including keyboard play.
 document.addEventListener('pointerdown', unlockAudio, { passive: true });
@@ -263,6 +264,7 @@ function refreshExplorer(pos, lastMove = null) {
 }
 
 function newGame(variantId = state.variantId) {
+  clearToasts();
   state.variantId = variantId;
   state.position = startPosition(variantId);
   state.history = [];
@@ -368,6 +370,9 @@ export function submitMove(move) {
   state.position = makeMove(position, submitted);
   if (submitted.captured || submitted.ep) audioCues.capture();
   else audioCues.move();
+  // Fired here rather than in the click handler, so anything that submits a
+  // move announces it -- a future opponent included.
+  toast(`${colorOf(piece) === 'w' ? 'White' : 'Black'} ${displayMove(position.shape, submitted)}`);
   state.selected = null;
   refresh();
   return true;

@@ -352,6 +352,47 @@ dialog::backdrop { background: #0007; }
 .asset-credit p { margin: 0; color: var(--muted); }
 .asset-credit a { color: var(--accent); }
 .asset-credit form { display: flex; justify-content: flex-end; margin-top: 18px; }
+/* Transient messages, in the lower third so they clear both the HUD above and
+   the board's own centre. Click-through, so one can never swallow a drag on
+   the canvas behind it. */
+.toast-host {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 81%;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+.toast {
+  max-width: min(675px, calc(100vw - 32px));
+  padding: 13px 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--ink);
+  font: 19.5px/1.45 ui-monospace, 'Cascadia Mono', monospace;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(9px);
+  transition: opacity .22s ease-out, transform .22s ease-out;
+}
+.toast.is-shown { opacity: 1; transform: none; }
+/* Slower on the way out than on the way in, so it reads as fading rather than
+   being cut off. Keep in step with FADE in toast.js. */
+.toast.is-leaving { transition: opacity .8s ease-in, transform .8s ease-in; }
+/* Reduced motion drops the movement, but keeps the fade: an element that
+   simply vanishes is harder to follow than one that dims, and opacity is not
+   the part that causes trouble. */
+@media (prefers-reduced-motion: reduce) {
+  .toast { transform: none; transition: opacity .22s; }
+  .toast.is-leaving { transition: opacity .8s; }
+}
+
 #promotion-choices { display: flex; gap: 8px; margin-top: 12px; }
 #promotion-choices button { font-size: 30px; line-height: 1; padding: 8px 12px; }
 
