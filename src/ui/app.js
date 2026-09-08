@@ -184,6 +184,16 @@ const legalTargets = (index) =>
   [...new Set(state.moves.filter((move) => move.from === index).map((move) => move.to))];
 
 function refreshExplorer(pos, lastMove = null) {
+  // Same variant means the same board, so the viewer can take the new position
+  // rather than be rebuilt around it. Rebuilding costs a WebGL context, a full
+  // shader recompile and a frame of blank canvas -- the flicker on every move,
+  // now twice a turn with an opponent playing.
+  if (explorer && explorer.position.variant === pos.variant && explorer.viewer?.setPosition) {
+    explorer.position = pos;
+    explorer.viewer.setPosition(pos, lastMove);
+    explorer.syncMoveDisplay?.();
+    explorer.rebuildPanels?.();
+  }
   if (!explorer || explorer.position !== pos) {
     const prevCamera = explorer?.viewer?.getCameraState?.();
     const prevOpen = explorer?.getOpen?.();
@@ -205,22 +215,28 @@ function refreshExplorer(pos, lastMove = null) {
     moveDisplay.setAttribute('aria-live', 'polite');
     const turn = document.createElement('strong');
     turn.className = 'explorer-turn';
-    turn.dataset.turn = pos.turn;
-    // Read off the list refresh() already built rather than calling status(),
-    // which would recompute legalMoves -- tens of milliseconds on the 8^4 board
-    // for an answer we are holding.
-    const noMoves = state.moves.length === 0;
-    turn.textContent = noMoves
-      ? (state.check
-        ? `Checkmate — ${pos.turn === 'w' ? 'Black' : 'White'} wins`
-        : 'Stalemate — draw')
-      : `${pos.turn === 'w' ? 'White' : 'Black'} to move${state.check ? ' — check' : ''}`;
     const last = document.createElement('span');
     last.className = 'explorer-last-move';
-    const previous = state.history.at(-1);
-    last.textContent = previous
-      ? `Last: ${colorOf(previous.move.piece) === 'w' ? 'White' : 'Black'} ${displayMove(previous.position.shape, previous.move)}`
-      : 'Last: —';
+    // A function rather than a one-off, because the shell is no longer rebuilt
+    // on every move: when the viewer takes a position in place, this is the
+    // only thing left that has to be told.
+    const syncMoveDisplay = () => {
+      const current = state.position;
+      turn.dataset.turn = current.turn;
+      // Read off the list refresh() already built rather than calling status(),
+      // which would recompute legalMoves -- tens of milliseconds on the 8^4
+      // board for an answer we are holding.
+      turn.textContent = state.moves.length === 0
+        ? (state.check
+          ? `Checkmate — ${current.turn === 'w' ? 'Black' : 'White'} wins`
+          : 'Stalemate — draw')
+        : `${current.turn === 'w' ? 'White' : 'Black'} to move${state.check ? ' — check' : ''}`;
+      const previous = state.history.at(-1);
+      last.textContent = previous
+        ? `Last: ${colorOf(previous.move.piece) === 'w' ? 'White' : 'Black'} ${displayMove(previous.position.shape, previous.move)}`
+        : 'Last: —';
+    };
+    syncMoveDisplay();
     moveDisplay.append(turn, last);
     // The square readout is game state too, so it joins the turn and the last
     // move rather than floating over the board by itself. The viewer keeps its
@@ -233,7 +249,8 @@ function refreshExplorer(pos, lastMove = null) {
     hud.className = 'explorer-hud';
     const brand = document.createElement('header');
     brand.className = 'explorer-brand';
-    brand.innerHTML = '<strong>4D chess</strong><a role="link" aria-disabled="true">created by lukajk</a>';
+    brand.innerHTML = '<strong>4D chess</strong>'
+      + '<a href="https://x.com/lukajk01" target="_blank" rel="noopener">created by lukajk</a>';
     // Attribution belongs with the byline rather than off in a corner of its
     // own. The dialog it opens stays where the viewer put it.
     const credit = viewer.element.querySelector('.credit-link');
@@ -258,7 +275,7 @@ function refreshExplorer(pos, lastMove = null) {
     // the list for the others, so this table is the only place the shell has
     // to know about dimension at all.
     const defs = [
-      { id: 'slices', label: 'Slices', make: () => buildSlices(pos) },
+      { id: 'slices', label: 'Slices', make: () => buildSlices(state.position) },
     ];
 
     const toolbar = document.createElement('div');
@@ -291,7 +308,7 @@ function refreshExplorer(pos, lastMove = null) {
             wrap.className = 'side-panel';
             wrap.append(view.element);
             side.append(wrap);
-            built.set(def.id, { view, wrap });
+            built.set(def.id, { def, view, wrap });
             view.update?.(state.selected);
           }
         }
@@ -304,7 +321,7 @@ function refreshExplorer(pos, lastMove = null) {
         wrap.className = 'side-panel';
         wrap.append(view.element);
         side.append(wrap);
-        built.set(def.id, { view, wrap });
+        built.set(def.id, { def, view, wrap });
         view.update?.(state.selected);
       }
     }
@@ -349,6 +366,17 @@ function refreshExplorer(pos, lastMove = null) {
       update(selected) {
         viewer.update(selected);
         for (const { view } of built.values()) view.update?.(selected);
+      },
+      // Docked panels were built against the position of the moment, so a
+      // viewer that takes a new one in place has to bring them along.
+      syncMoveDisplay,
+      rebuildPanels() {
+        for (const entry of built.values()) {
+          entry.view.destroy?.();
+          entry.view = entry.def.make();
+          entry.wrap.replaceChildren(entry.view.element);
+          entry.view.update?.(state.selected);
+        }
       },
       destroy() {
         viewer.destroy();

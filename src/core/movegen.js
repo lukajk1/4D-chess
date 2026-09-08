@@ -243,7 +243,10 @@ export function pseudoMoves(pos, color = pos.turn) {
 //
 // This is the hottest function in the engine: legality testing calls it once
 // per candidate move, and any search calls legality once per node.
-export function isAttacked(pos, index, byColor) {
+// `found` non-null collects every attacker; null stops at the first, which is
+// all isAttacked needs and is the shape the hot path wants. One body, so the
+// two can never disagree about what counts as an attack.
+function probeAttackers(pos, index, byColor, found) {
   const shape = pos.shape;
   const coord = toCoord(shape, index);
 
@@ -253,7 +256,10 @@ export function isAttacked(pos, index, byColor) {
   const direction = forwardDirectionOf(pos, byColor);
   for (const vector of pawnCaptureVectorsFor(pos.dims, axis, direction)) {
     const from = step(shape, coord, vector, -1);
-    if (from !== -1 && pos.squares[from] === pawn) return true;
+    if (from !== -1 && pos.squares[from] === pawn) {
+      if (!found) return true;
+      found.push(from);
+    }
   }
 
   // Leaper vector sets are closed under negation, so a piece that could jump
@@ -262,7 +268,10 @@ export function isAttacked(pos, index, byColor) {
     const piece = withColor(type, byColor);
     for (const vector of vectorsFor(type, pos.dims)) {
       const from = step(shape, coord, vector);
-      if (from !== -1 && pos.squares[from] === piece) return true;
+      if (from !== -1 && pos.squares[from] === piece) {
+        if (!found) return true;
+        found.push(from);
+      }
     }
   }
 
@@ -275,11 +284,24 @@ export function isAttacked(pos, index, byColor) {
       if (to === -1) break;
       const piece = pos.squares[to];
       if (piece === null) continue;
-      if (colorOf(piece) === byColor && ray.types.has(typeOf(piece))) return true;
+      if (colorOf(piece) === byColor && ray.types.has(typeOf(piece))) {
+        if (!found) return true;
+        found.push(to);
+      }
       break;
     }
   }
-  return false;
+  return found ?? false;
+}
+
+export function isAttacked(pos, index, byColor) {
+  return probeAttackers(pos, index, byColor, null);
+}
+
+// Every enemy piece bearing on a square. Costs the same order as one attack
+// test rather than one per enemy piece, because it is the same outward walk.
+export function attackersOf(pos, index, byColor) {
+  return probeAttackers(pos, index, byColor, []);
 }
 
 export function inCheck(pos, color = pos.turn) {

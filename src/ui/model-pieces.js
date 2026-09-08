@@ -144,10 +144,11 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // The rim is written from the matrices the solid and ghost batches already
   // hold, so it cannot drift out of step with them.
   let highlight = null;
-  // The square whose king is under attack, if any. It needs its own mask mesh
-  // rather than joining `outline`: OutlinePass carries one edge colour for the
-  // whole pass, so a red king and a gold selection cannot share one.
-  let checkLattice = null;
+  // The squares a check involves: the king, and everything bearing on it. They
+  // need their own mask meshes rather than joining `outline`, because
+  // OutlinePass carries one edge colour for the whole pass and a red king
+  // cannot share it with a gold selection.
+  let checkSquares = new Set();
   let enabled = false;
   let capturable = new Set();
   let lastUpdateArgs = null;
@@ -245,29 +246,28 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     writeCheckOutlines();
   }
 
-  // Same idea as writeOutlines, narrowed to one square: every copy of the
-  // checked king, wherever the unfold has carried it.
+  // Same shape as writeOutlines, filtered to the squares a check involves.
+  // Every group is walked, not just the king's: an attacker can be any type,
+  // and there can be more than one of them.
   function writeCheckOutlines() {
     for (const group of groups.values()) {
-      if (group.checkOutline) group.checkOutline.visible = false;
+      if (!group.checkOutline) continue;
+      group.checkOutline.visible = false;
+      if (!enabled || !checkSquares.size) continue;
+      let n = 0;
+      for (const part of [group.solid, group.ghost]) {
+        if (!part.mesh) continue;
+        part.slots.forEach((slot, i) => {
+          if (!checkSquares.has(instances[slot].lattice)) return;
+          part.mesh.getMatrixAt(i, scratch);
+          group.checkOutline.setMatrixAt(n++, scratch);
+        });
+      }
+      group.checkOutline.count = n;
+      group.checkOutline.visible = n > 0;
+      group.checkOutline.instanceMatrix.needsUpdate = true;
+      group.checkOutline.boundingSphere = null;
     }
-    if (!enabled || checkLattice === null) return;
-    const char = pieceAt(checkLattice);
-    const group = char ? groups.get(char.toLowerCase()) : null;
-    if (!group?.checkOutline) return;
-    let n = 0;
-    for (const part of [group.solid, group.ghost]) {
-      if (!part.mesh) continue;
-      part.slots.forEach((slot, i) => {
-        if (instances[slot].lattice !== checkLattice) return;
-        part.mesh.getMatrixAt(i, scratch);
-        group.checkOutline.setMatrixAt(n++, scratch);
-      });
-    }
-    group.checkOutline.count = n;
-    group.checkOutline.visible = n > 0;
-    group.checkOutline.instanceMatrix.needsUpdate = true;
-    group.checkOutline.boundingSphere = null;
   }
 
   return {
@@ -292,8 +292,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       highlight = lattice;
       writeOutlines();
     },
-    setCheck(lattice) {
-      checkLattice = lattice;
+    setCheck(squares) {
+      checkSquares = squares instanceof Set ? squares : new Set(squares ?? []);
       writeCheckOutlines();
     },
     checkOutlineTargets() {

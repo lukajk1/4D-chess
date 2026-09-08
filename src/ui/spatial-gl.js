@@ -4,9 +4,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { envelope, inCheck } from '../core/movegen.js';
+import { envelope, inCheck, attackersOf } from '../core/movegen.js';
 import { squareName, layerName, wName } from '../core/notation.js';
-import { nameOf } from '../core/pieces.js';
+import { PIECES, nameOf } from '../core/pieces.js';
 import { createModelPieces, pieceColorAt } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
 import { isInterior, tesseractCells, hingeTree, unfoldCoord } from './tesseract.js';
@@ -775,15 +775,24 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   // are listed first so home pieces draw over them wherever they coincide.
   const GHOST_ALPHA = 0.3;
   const pieceInstances = [];
-  pieceIndices.forEach((lattice, i) => {
-    const copies = [];
-    for (let s = 0; s < slotCount; s++) if (slotLattice[s] === lattice) copies.push(s);
-    const home = copies.find((s) => slots[s].cell?.axis === 3) ?? copies[0];
-    for (const s of copies) {
-      pieceInstances.push({ piece: i, lattice, slot: s, home: s === home, homeSlot: home });
-    }
-  });
-  pieceInstances.sort((a, b) => Number(a.home) - Number(b.home));
+  // Both arrays are refilled rather than replaced, so everything holding a
+  // reference to them -- the sprite batch, the model batches -- keeps working
+  // across a change of position.
+  function rebuildPieceInstances() {
+    pieceIndices.length = 0;
+    for (let i = 0; i < pos.squares.length; i++) if (pos.squares[i] !== null) pieceIndices.push(i);
+    pieceInstances.length = 0;
+    pieceIndices.forEach((lattice, i) => {
+      const copies = [];
+      for (let s = 0; s < slotCount; s++) if (slotLattice[s] === lattice) copies.push(s);
+      const home = copies.find((s) => slots[s].cell?.axis === 3) ?? copies[0];
+      for (const s of copies) {
+        pieceInstances.push({ piece: i, lattice, slot: s, home: s === home, homeSlot: home });
+      }
+    });
+    pieceInstances.sort((a, b) => Number(a.home) - Number(b.home));
+  }
+  rebuildPieceInstances();
 
   // ---- pieces as one instanced, billboarded quad
   let pieceMesh = null;
@@ -794,7 +803,10 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   let pieceCapturable = null;
   let atlas = null;
   if (pieceCount) {
-    const chars = [...new Set(pieceIndices.map((i) => pos.get(i)))];
+    // Every piece either side could ever hold, not just what is on the board
+    // now: a promotion can introduce a queen where there was none, and this
+    // atlas is built once and never rebuilt.
+    const chars = Object.keys(PIECES).flatMap((type) => [type.toUpperCase(), type]);
     atlas = buildGlyphAtlas(chars, glyphFor);
 
     const quad = new THREE.InstancedBufferGeometry();
@@ -842,18 +854,30 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   const modelStatus = document.createElement('output');
   modelStatus.setAttribute('aria-live', 'polite');
   root.querySelector('.cube-controls').append(modelStatus);
-  const modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
-    modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
-    applyFilters();
-  }, theme.selected, pos.turn, (index) => depthAtW(coords[index][3] ?? 0));
+  // Reassigned by setPosition: the per-type instance counts move when a piece
+  // is captured or promoted, so these batches cannot simply be re-filled. Every
+  // reader goes through the binding, so they all follow. The module-level
+  // geometry cache means a rebuild re-instances meshes, it does not refetch.
+  function checkSquares() {
+    if (!inCheck(pos)) return [];
+    const king = pos.kingIndex(pos.turn);
+    return [king, ...attackersOf(pos, king, pos.turn === 'w' ? 'b' : 'w')];
+  }
+
+  let modelPieces = null;
+  function buildModelPieces() {
+    modelPieces = createModelPieces(scene, pieceInstances, (index) => pos.get(index), (failed) => {
+      modelStatus.textContent = failed ? 'Some models unavailable; using glyphs.' : '';
+      applyFilters();
+    }, theme.selected, pos.turn, (index) => depthAtW(coords[index][3] ?? 0));
+    // The king under attack and everything attacking it, so a check reads as a
+    // relationship rather than one piece being unwell. writeOutlines re-runs
+    // the check pass on every update, so setting this before the models have
+    // loaded is fine; it lands as soon as there is something to outline.
+    modelPieces.setCheck(checkSquares());
+  }
+  buildModelPieces();
   const renderPass = new RenderPass(scene, camera);
-  // Which king, if any, is under attack. A property of the position, and the
-  // viewer is rebuilt per position, so this is worked out exactly once.
-  // writeOutlines re-runs the check pass on every update, so setting it here --
-  // before the models have finished loading and before any matrices exist --
-  // is fine; it lands as soon as there is something to outline.
-  const checkedKing = inCheck(pos) ? pos.kingIndex(pos.turn) : null;
-  modelPieces.setCheck(checkedKing);
 
   const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
   outlinePass.edgeStrength = 4;
@@ -2096,6 +2120,55 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       } else {
         writeSlotPositions();
       }
+      applyFilters();
+      needsRender = true;
+    },
+    // Accepts the next position without tearing the viewer down. A rebuild
+    // means a new WebGL context, every shader recompiled and a blank canvas
+    // swapped into the page -- which is the flicker on every move. Nothing
+    // about the lattice changes between positions: same shape, same slots,
+    // same colours, same coordinates. Only the pieces move.
+    setPosition(next, move = null) {
+      // The same Position object, refilled. Thirty-odd closures in this module
+      // captured `pos`; refreshing it in place keeps every one of them valid.
+      pos.squares = next.squares.slice();
+      pos.turn = next.turn;
+      pos.castling = next.castling;
+      pos.ep = next.ep;
+      pos.halfmove = next.halfmove;
+      pos.fullmove = next.fullmove;
+      pos._kings = undefined;
+
+      animatingMove = move && move.from !== undefined && move.to !== undefined ? {
+        from: move.from, to: move.to, piece: move.piece,
+        startTime: performance.now(), duration: 250,
+      } : null;
+      capturedToSpawn = move?.captured && move.to !== undefined
+        ? { char: move.captured, square: move.to } : null;
+      captureSpawnReady = false;
+
+      rebuildPieceInstances();
+      if (pieceMesh) {
+        // Piece count only ever falls during a game -- a capture removes one,
+        // a promotion swaps a pawn for a queen -- so the buffers sized at
+        // construction are always large enough and only the count moves.
+        const geometry = pieceMesh.geometry;
+        geometry.instanceCount = pieceInstances.length;
+        const cells = geometry.attributes.aCell;
+        pieceInstances.forEach((inst, k) => {
+          cells.array.set(atlas.index.get(pos.get(inst.lattice)), k * 2);
+        });
+        cells.needsUpdate = true;
+      }
+      modelPieces.dispose();
+      buildModelPieces();
+
+      selected = null;
+      targets = [];
+      updateCapturable();
+      modelPieces.setCapturable(capturable);
+      modelPieces.setHighlight(null);
+      rebuildPositions();
       applyFilters();
       needsRender = true;
     },
