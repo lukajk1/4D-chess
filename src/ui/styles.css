@@ -14,9 +14,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Lifted 15% from #16191d: the Page background option is this colour
-       showing through the transparent canvas, and it read too heavy. */
-    --bg: #191d21;
+    /* The Page background option is this colour showing through the
+       transparent canvas, so it is the scene's backdrop as much as the page's. */
+    --bg: #283038;
     --panel: #1d2126;
     --ink: #e6e8ea;
     --muted: #97a0ab;
@@ -330,14 +330,14 @@ dialog::backdrop { background: #0007; }
   align-self: flex-start;
   pointer-events: auto;
   min-height: 0;
-  margin-top: 2px;
+  margin-top: 5px;
   border: 0;
   padding: 0;
   background: none;
   color: var(--muted);
-  font: 12px/1.5 system-ui, -apple-system, sans-serif;
+  font: 27.6px/1.5 system-ui, -apple-system, sans-serif;
   text-decoration: underline;
-  text-underline-offset: 3px;
+  text-underline-offset: 7px;
   cursor: pointer;
   /* The same shadow the rest of the HUD carries, stated rather than inherited
      so a form control cannot lose it to a UA default. */
@@ -470,9 +470,15 @@ dialog::backdrop { background: #0007; }
 /* Rides on the view beneath the game state rather than taking a column of its
    own. Only this subtree takes pointer events, so the lattice behind the rest
    of the HUD stays draggable. */
+/* The control groups ride on the right of the view, always visible. Each group
+   still opens and shuts on its own; the panel around them does not. */
 .explorer-controls {
-  flex: 1 1 auto;
-  min-height: 0;
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  bottom: 14px;
+  z-index: 4;
+  width: var(--explorer-controls-width, 292px);
   pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -525,7 +531,7 @@ dialog::backdrop { background: #0007; }
 
 .explorer-brand { display: flex; flex-direction: column; align-items: flex-start; margin: 0; }
 .explorer-brand strong { font-size: clamp(39px, 3.15vw, 51px); line-height: 1.08; letter-spacing: -.035em; }
-.explorer-brand a { margin-top: 4px; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.explorer-brand a { margin-top: 9px; color: var(--muted); font-size: 27.6px; text-decoration: underline; text-underline-offset: 7px; }
 .explorer-controls::-webkit-scrollbar { width: 8px; }
 .explorer-controls::-webkit-scrollbar-track { background: transparent; }
 .explorer-controls::-webkit-scrollbar-thumb {
@@ -573,7 +579,6 @@ dialog::backdrop { background: #0007; }
   position: absolute;
   top: 14px;
   left: 16px;
-  bottom: 14px;
   z-index: 4;
   display: flex;
   flex-direction: column;

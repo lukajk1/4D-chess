@@ -34,7 +34,7 @@ const state = {
   selected: null,
   moves: [],       // legal moves for the side to move, rebuilt once per position
   check: false,    // is that side's king attacked right now
-  opponent: null,  // difficulty key, or null for two players
+  opponent: 'easy',  // difficulty key, or null for two players
   askedFor: null,  // the position the engine was last asked about
 };
 
@@ -42,8 +42,32 @@ const state = {
 // but one colour keeps the first version honest.
 const COMPUTER = 'b';
 
+// The engine answers in 66ms on easy and can take seconds on extreme. Holding
+// every reply to the same window makes the opponent read as one player rather
+// than four, and keeps an instant answer from looking like it never thought.
+// A floor, not an addition: a search that outruns the window plays the moment
+// the window closes, and one that overruns it plays as soon as it is done.
+const THINK_MIN = 1000;
+const THINK_MAX = 1500;
+
+// The shell is rebuilt on every move, so a group the player opened has to be
+// remembered out here or it would shut itself each turn.
+const openGroups = new Set();
+
 let computer = null;
 let computerRequest = 0;
+let computerReadyAt = 0;
+let computerTimer = 0;
+
+// Drops whatever is in flight or waiting on the clock. Bumping the counter is
+// what makes a late reply unplayable, since every path back into submitMove
+// checks it against the id it was issued with.
+function cancelComputer() {
+  computerRequest++;
+  clearTimeout(computerTimer);
+  computerTimer = 0;
+  state.askedFor = null;
+}
 
 function ensureComputer() {
   if (computer) return computer;
@@ -54,7 +78,13 @@ function ensureComputer() {
     // all bump the counter, so a stale reply can never be played.
     if (id !== computerRequest) return;
     if (error) { toast(`Computer: ${error}`); return; }
-    if (move) submitMove(move);
+    if (!move) return;
+    // Held until the window opened at request time. The id is re-checked when
+    // it fires, so an undo during the wait cancels the move rather than
+    // playing it a beat later.
+    computerTimer = setTimeout(() => {
+      if (id === computerRequest) submitMove(move);
+    }, Math.max(0, computerReadyAt - performance.now()));
   });
   return computer;
 }
@@ -68,6 +98,7 @@ function askComputer() {
   if (state.askedFor === pos) return;
   state.askedFor = pos;
   const id = ++computerRequest;
+  computerReadyAt = performance.now() + THINK_MIN + Math.random() * (THINK_MAX - THINK_MIN);
   try {
     ensureComputer().postMessage({
       id, fen: toFen(pos), variantId: state.variantId, difficulty: state.opponent,
@@ -209,15 +240,17 @@ function refreshExplorer(pos, lastMove = null) {
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
     hud.append(brand, moveDisplay, els.variant, els.opponent);
-    main.append(viewer.element, hud);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
     // Controls ride on the view under the game state, optional views dock on
     // the right, and the canvas spans everything behind them.
+    // Everything you set while looking at the board lives on the right. Board
+    // and opponent stay on the left with the game state: those are chosen
+    // before a game, not adjusted during one.
     const controlsPanel = document.createElement('aside');
     controlsPanel.className = 'explorer-controls';
-    hud.append(controlsPanel);
+    main.append(viewer.element, hud, controlsPanel);
     shell.append(main, side);
 
     // Which auxiliary views this position offers. Views that only make sense
@@ -279,12 +312,26 @@ function refreshExplorer(pos, lastMove = null) {
     // Fold the panel toggles and the view's own reset into the viewer's
     // control strip and drop its heading, so the explorer reads as one
     // surface instead of a card inside a toolbar inside a page.
+    // Same problem one level down: <details> loses its open state with the
+    // shell, which against a computer opponent means every turn.
+    for (const group of viewer.element.querySelectorAll('.control-group')) {
+      const name = group.querySelector('summary')?.textContent ?? '';
+      group.open = openGroups.has(name);
+      group.addEventListener('toggle', () => {
+        if (group.open) openGroups.add(name);
+        else openGroups.delete(name);
+      });
+    }
+
     const controls = viewer.element.querySelector('.cube-controls');
     const heading = viewer.element.querySelector('.cube-heading');
     const resetView = heading?.querySelector('.reset-camera');
     heading?.remove();
     if (resetView) toolbar.append(resetView);
-    toolbar.append(els.undo);
+    // Undo is not docked: against the computer it takes back one ply, landing
+    // on the engine's turn so it immediately replays and the move appears
+    // un-undoable. Taking back two plies is the fix; until then the button
+    // stays in the hidden .game-state row, wired but unreachable.
     toolbar.append(els.reset);
     if (controls) {
       controls.append(toolbar);
@@ -319,8 +366,7 @@ function refreshExplorer(pos, lastMove = null) {
 
 function newGame(variantId = state.variantId) {
   clearToasts();
-  computerRequest++;
-  state.askedFor = null;
+  cancelComputer();
   state.variantId = variantId;
   state.position = startPosition(variantId);
   state.history = [];
@@ -454,6 +500,9 @@ function askPromotion(moves) {
 function undo() {
   const previous = state.history.pop();
   if (!previous) return;
+  // Without this a search already running for the position being taken back
+  // would return and play into the restored one.
+  cancelComputer();
   state.animatingMove = null;
   state.position = previous.position;
   state.selected = null;
@@ -498,7 +547,7 @@ for (const [key, options] of [['', 'Two players'], ...Object.entries(difficultie
   option.textContent = options;
   els.opponent.append(option);
 }
-els.opponent.value = '';
+els.opponent.value = state.opponent ?? '';
 
 els.variant.addEventListener('change', (event) => newGame(event.target.value));
 // Restarting on change is what makes this "choose before you play": swapping
