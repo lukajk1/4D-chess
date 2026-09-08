@@ -37,6 +37,22 @@ Two things make that true, and both are easy to break:
 `npm install` is only needed to re-vendor three or to work on the dependency
 itself; `server.js` is a convenience for local development, not a requirement.
 
+**`server.js` is not a deployment target.** Vercel and the like have no
+persistent Node process, so nothing runs it — and nothing needs to. Configuring
+a host to "use Node" for this repo asks it to do something the repo does not
+want. `vercel.json` pins the honest description instead:
+
+```json
+{ "framework": null, "buildCommand": null, "outputDirectory": "." }
+```
+
+No framework, no build, serve the repo root. On Vercel the dashboard equivalents
+are Framework Preset **Other**, Build Command **off**, Output Directory **`.`**;
+`vercel.json` overrides those, so it is the one place to change them.
+
+`three` is a devDependency, not a dependency: the site loads `vendor/three/`,
+and `node_modules/three` exists only to re-vendor from.
+
 ## The idea
 
 A piece is defined by **how many axes its step vector touches**, not by a

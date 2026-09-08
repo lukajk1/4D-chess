@@ -9,7 +9,7 @@
     "test": "node --test test/core.test.js",
     "vendor": "node scripts/vendor-three.js"
   },
-  "dependencies": {
+  "devDependencies": {
     "three": "^0.185.1"
   }
 }
