@@ -1,11 +1,12 @@
-import { legalMoves, makeMove, status, inCheck, envelope, forwardAxisOf, forwardDirectionOf } from '../core/movegen.js';
-import { colorOf, typeOf, toCoord } from '../core/position.js';
+import { legalMoves, makeMove, inCheck, envelope } from '../core/movegen.js';
+import { colorOf } from '../core/position.js';
 import { toFen, squareName } from '../core/notation.js';
 import { startPosition, loadFen, VARIANTS } from '../variants.js';
 import { renderBoard, renderCoordinates, glyphFor } from './board.js';
 import { createSpatialView } from './spatial-gl.js';
 import { audioCues, unlockAudio } from './audio.js';
 import { toast, clearToasts } from './toast.js';
+import { difficulties } from '../core/search.js';
 
 // Unlock on gestures before a move is submitted, including keyboard play.
 document.addEventListener('pointerdown', unlockAudio, { passive: true });
@@ -13,6 +14,7 @@ document.addEventListener('keydown', unlockAudio);
 
 const els = {
   variant: document.querySelector('#variant'),
+  opponent: document.querySelector('#opponent'),
   boardArea: document.querySelector('#board-area'),
   status: document.querySelector('#status'),
   history: document.querySelector('#history'),
@@ -30,8 +32,52 @@ const state = {
   position: null,
   history: [],      // { position, move } for undo and the move list
   selected: null,
-  moves: [],
+  moves: [],       // legal moves for the side to move, rebuilt once per position
+  check: false,    // is that side's king attacked right now
+  opponent: null,  // difficulty key, or null for two players
+  askedFor: null,  // the position the engine was last asked about
 };
+
+// The engine plays Black. A side picker is the obvious next thing to add here,
+// but one colour keeps the first version honest.
+const COMPUTER = 'b';
+
+let computer = null;
+let computerRequest = 0;
+
+function ensureComputer() {
+  if (computer) return computer;
+  computer = new Worker(new URL('./computer.worker.js', import.meta.url), { type: 'module' });
+  computer.addEventListener('message', (event) => {
+    const { id, move, error } = event.data ?? {};
+    // Anything the board has moved past. Undo, a new game and a later request
+    // all bump the counter, so a stale reply can never be played.
+    if (id !== computerRequest) return;
+    if (error) { toast(`Computer: ${error}`); return; }
+    if (move) submitMove(move);
+  });
+  return computer;
+}
+
+// Called after every position change. Guarded on the position itself rather
+// than on a flag, because refresh() also runs for selection changes and must
+// not set the engine going again on a board it is already thinking about.
+function askComputer() {
+  const pos = state.position;
+  if (!state.opponent || pos.turn !== COMPUTER || !state.moves.length) return;
+  if (state.askedFor === pos) return;
+  state.askedFor = pos;
+  const id = ++computerRequest;
+  try {
+    ensureComputer().postMessage({
+      id, fen: toFen(pos), variantId: state.variantId, difficulty: state.opponent,
+    });
+  } catch (error) {
+    toast('Computer unavailable in this browser');
+    state.opponent = null;
+    els.opponent.value = '';
+  }
+}
 
 let explorer = null;
 
@@ -99,6 +145,13 @@ function createBoardView(pos) {
   return { element: root, update: draw, destroy() {} };
 }
 
+// What the spatial viewer draws as reachable. The legal list, not the raw
+// reach, so a highlighted square is always one that can actually be played --
+// and deduped, because a promotion contributes one move per piece it can
+// become and would otherwise stack four walls on one square.
+const legalTargets = (index) =>
+  [...new Set(state.moves.filter((move) => move.from === index).map((move) => move.to))];
+
 function refreshExplorer(pos, lastMove = null) {
   if (!explorer || explorer.position !== pos) {
     const prevCamera = explorer?.viewer?.getCameraState?.();
@@ -106,7 +159,7 @@ function refreshExplorer(pos, lastMove = null) {
     explorer?.destroy();
 
     const viewer = pos.dims > 2
-      ? createSpatialView(pos, onSquare, glyphFor, lastMove)
+      ? createSpatialView(pos, onSquare, glyphFor, lastMove, legalTargets)
       : createBoardView(pos);
     // Optional: a camera state only means something to the spatial viewer, and
     // switching from one of those to a flat board carries a live one across.
@@ -122,14 +175,15 @@ function refreshExplorer(pos, lastMove = null) {
     const turn = document.createElement('strong');
     turn.className = 'explorer-turn';
     turn.dataset.turn = pos.turn;
-    // Only the flat boards have their legal moves to hand; the spatial ones
-    // move off `envelope` and never compute a full list to test for mate.
-    const outcome = pos.dims > 2 ? null : status(pos);
-    turn.textContent = outcome?.over
-      ? (outcome.reason === 'checkmate'
-        ? `Checkmate — ${outcome.result === 'w' ? 'White' : 'Black'} wins`
+    // Read off the list refresh() already built rather than calling status(),
+    // which would recompute legalMoves -- tens of milliseconds on the 8^4 board
+    // for an answer we are holding.
+    const noMoves = state.moves.length === 0;
+    turn.textContent = noMoves
+      ? (state.check
+        ? `Checkmate — ${pos.turn === 'w' ? 'Black' : 'White'} wins`
         : 'Stalemate — draw')
-      : `${pos.turn === 'w' ? 'White' : 'Black'} to move${outcome?.check ? ' — check' : ''}`;
+      : `${pos.turn === 'w' ? 'White' : 'Black'} to move${state.check ? ' — check' : ''}`;
     const last = document.createElement('span');
     last.className = 'explorer-last-move';
     const previous = state.history.at(-1);
@@ -154,7 +208,7 @@ function refreshExplorer(pos, lastMove = null) {
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
-    hud.append(brand, moveDisplay, els.variant);
+    hud.append(brand, moveDisplay, els.variant, els.opponent);
     main.append(viewer.element, hud);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
@@ -265,6 +319,8 @@ function refreshExplorer(pos, lastMove = null) {
 
 function newGame(variantId = state.variantId) {
   clearToasts();
+  computerRequest++;
+  state.askedFor = null;
   state.variantId = variantId;
   state.position = startPosition(variantId);
   state.history = [];
@@ -280,11 +336,15 @@ function refresh() {
   // canvas goes and inherit the same HUD, toolbar and history around it, so
   // `inspection` is really just "the explorer layout" and is always on.
   document.body.classList.add('inspection');
-  // The spatial path picks its destinations off `envelope`; only the flat
-  // boards need a real legal-move list, for their targets and promotions.
-  state.moves = pos.dims > 2 ? [] : legalMoves(pos);
+  // Every variant now plays by the same rules. legalMoves is dimension-generic
+  // and perft-verified, so 3D and 4D get check, checkmate and stalemate from
+  // the same code the flat boards use. It runs once per position, not per
+  // click -- selection goes through refreshExplorer, which does not come here.
+  state.moves = legalMoves(pos);
+  state.check = inCheck(pos);
   refreshExplorer(pos, state.animatingMove ?? null);
   state.animatingMove = null;
+  askComputer();
 }
 
 function renderHistory() {
@@ -308,22 +368,16 @@ function onSquare(index) {
 
   if (isSpatial) {
     if (state.selected !== null) {
-      const targets = envelope(pos, state.selected);
-      if (targets.includes(index)) {
-        const piece = pos.get(state.selected);
-        const color = colorOf(piece);
-        const axis = forwardAxisOf(pos);
-        const lastRank = forwardDirectionOf(pos, color) > 0 ? pos.shape[axis] - 1 : 0;
-        const isPawnPromotion = typeOf(piece) === 'p' && toCoord(pos.shape, index)[axis] === lastRank;
-        const move = {
-          from: state.selected,
-          to: index,
-          piece,
-          captured: pos.get(index),
-          promotion: isPawnPromotion ? 'q' : null,
-        };
-        submitMove(move);
-        return;
+      // Same shape as the flat path: the move has to be in the legal list, and
+      // several entries for one square means a promotion to choose between.
+      const matching = state.moves.filter((m) => m.from === state.selected && m.to === index);
+      if (matching.length === 1) return submitMove(matching[0]);
+      if (matching.length > 1) return askPromotion(matching);
+      // Nothing legal here. If the king is under attack that is almost always
+      // the reason, and it is the one rejection worth explaining -- but only
+      // when a real move was attempted, not on a click into open space.
+      if (state.check && envelope(pos, state.selected).includes(index)) {
+        toast('Check — that move leaves your king attacked');
       }
     }
 
@@ -338,6 +392,9 @@ function onSquare(index) {
     const matching = state.moves.filter((m) => m.from === state.selected && m.to === index);
     if (matching.length === 1) return submitMove(matching[0]);
     if (matching.length > 1) return askPromotion(matching);
+    if (state.check && envelope(pos, state.selected).includes(index)) {
+      toast('Check — that move leaves your king attacked');
+    }
   }
 
   const piece = pos.get(index);
@@ -435,7 +492,21 @@ for (const [id, variant] of Object.entries(VARIANTS)) {
 }
 els.variant.value = state.variantId;
 
+for (const [key, options] of [['', 'Two players'], ...Object.entries(difficulties).map(([k, o]) => [k, `Computer — ${o.label}`])]) {
+  const option = document.createElement('option');
+  option.value = key;
+  option.textContent = options;
+  els.opponent.append(option);
+}
+els.opponent.value = '';
+
 els.variant.addEventListener('change', (event) => newGame(event.target.value));
+// Restarting on change is what makes this "choose before you play": swapping
+// opponents mid-game would leave a history half of one and half of the other.
+els.opponent.addEventListener('change', (event) => {
+  state.opponent = event.target.value || null;
+  newGame();
+});
 els.reset.addEventListener('click', () => newGame());
 els.undo.addEventListener('click', undo);
 els.load.addEventListener('click', loadFromField);

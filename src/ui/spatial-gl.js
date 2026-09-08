@@ -4,7 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { envelope } from '../core/movegen.js';
+import { envelope, inCheck } from '../core/movegen.js';
 import { squareName, layerName, wName } from '../core/notation.js';
 import { nameOf } from '../core/pieces.js';
 import { createModelPieces, pieceColorAt } from './model-pieces.js';
@@ -21,7 +21,10 @@ import {
 // Lattice points and wires stay in shared buffers. Pieces can use either the
 // single billboard batch or one instanced model batch per visible piece type.
 
-export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
+// `targetsFor` supplies the squares to highlight for a selection. The shell
+// passes the legal list; falling back to the raw reach keeps the viewer usable
+// on its own, where there is no game controller to ask.
+export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targetsFor = null) {
   const is4D = pos.dims === 4;
   const theme = readTheme();
   let animatingMove = lastMove && lastMove.from !== undefined && lastMove.to !== undefined ? {
@@ -844,6 +847,14 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     applyFilters();
   }, theme.selected, pos.turn, (index) => depthAtW(coords[index][3] ?? 0));
   const renderPass = new RenderPass(scene, camera);
+  // Which king, if any, is under attack. A property of the position, and the
+  // viewer is rebuilt per position, so this is worked out exactly once.
+  // writeOutlines re-runs the check pass on every update, so setting it here --
+  // before the models have finished loading and before any matrices exist --
+  // is fine; it lands as soon as there is something to outline.
+  const checkedKing = inCheck(pos) ? pos.kingIndex(pos.turn) : null;
+  modelPieces.setCheck(checkedKing);
+
   const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
   outlinePass.edgeStrength = 4;
   outlinePass.edgeGlow = .65;
@@ -865,6 +876,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.addPass(renderPass);
   composer.addPass(outlinePass);
+  // A second pass, because OutlinePass has one edge colour for everything it
+  // selects. Layering them lets a checked king read red while a selection is
+  // still gold, instead of the two fighting over one uniform.
+  const checkPass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
+  checkPass.edgeStrength = 6;
+  checkPass.edgeGlow = .8;
+  checkPass.edgeThickness = 1.6;
+  checkPass.visibleEdgeColor.set('#ff3b30');
+  checkPass.hiddenEdgeColor.set('#000000');
+  composer.addPass(checkPass);
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
 
@@ -1532,6 +1553,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
     controls.object = next;
     renderPass.camera = next;
     outlinePass.renderCamera = next;
+    checkPass.renderCamera = next;
     pointMaterial.uniforms.uPerspective.value = kind === 'perspective' ? 1 : 0;
     controls.update();
     needsRender = true;
@@ -1900,6 +1922,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       outlinePass.selectedObjects = modelPieces.outlineTargets();
       outlinePass.visibleEdgeColor.set(modelPieces.outlineColor());
       outlinePass.edgeStrength = modelPieces.outlineStrength();
+      checkPass.selectedObjects = modelPieces.checkOutlineTargets();
       composer.render();
       needsRender = false;
     }
@@ -2081,7 +2104,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       if (selected !== null) {
         if (layer !== null && layerSelect) { layer = coords[selected][2]; layerSelect.value = String(layer); applyFilters(); }
       }
-      targets = selected === null ? [] : envelope(pos, selected);
+      targets = selected === null ? []
+        : targetsFor ? targetsFor(selected)
+        : envelope(pos, selected);
       updateCapturable();
       modelPieces.setCapturable(capturable);
       modelPieces.setHighlight(selected);
@@ -2126,6 +2151,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null) {
       skyTexture?.dispose();
       modelPieces.dispose();
       outlinePass.dispose();
+      checkPass.dispose();
       outputPass.dispose();
       composer.dispose();
       renderer.dispose();

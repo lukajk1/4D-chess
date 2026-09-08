@@ -1,39 +1,79 @@
 import { WHITE, BLACK, colorOf, typeOf, opposite, withColor, toCoord, toIndex, step } from './position.js';
-import { vectorsFor, modeOf } from './pieces.js';
+import { PIECES, vectorsFor, modeOf } from './pieces.js';
 
 export const forwardAxisOf = (pos) => pos.variant?.forwardAxis ?? (pos.dims >= 2 ? 1 : 0);
 export const forwardDirectionOf = (pos, color) => pos.variant?.forwardDirection?.[color]
   ?? (color === WHITE ? 1 : -1);
 const promotionsOf = (pos) => pos.variant?.promotions ?? ['q', 'r', 'b', 'n'];
 
-function slide(pos, from, vectors, out, color) {
+// Every generated move carries the same fields in the same order, so this --
+// the engine's most frequent allocation -- keeps to one hidden class, and no
+// consumer has to distinguish "absent" from "false". `rank` is included for
+// the search's move ordering, which writes it on every move of every node and
+// would otherwise reshape each object as it went.
+function newMove(from, to, piece, captured, promotion = null, ep = false, double = false, castle = null) {
+  return { from, to, piece, captured, promotion, ep, double, castle, rank: 0 };
+}
+
+function slide(pos, from, piece, vectors, out, color) {
   const coord = toCoord(pos.shape, from);
   for (const vector of vectors) {
     for (let distance = 1; ; distance++) {
       const to = step(pos.shape, coord, vector, distance);
       if (to === -1) break;
       const target = pos.get(to);
-      if (target === null) { out.push({ from, to, captured: null }); continue; }
-      if (colorOf(target) !== color) out.push({ from, to, captured: target });
+      if (target === null) { out.push(newMove(from, to, piece, null)); continue; }
+      if (colorOf(target) !== color) out.push(newMove(from, to, piece, target));
       break;
     }
   }
 }
 
-function leap(pos, from, vectors, out, color) {
+function leap(pos, from, piece, vectors, out, color) {
   const coord = toCoord(pos.shape, from);
   for (const vector of vectors) {
     const to = step(pos.shape, coord, vector);
     if (to === -1) continue;
     const target = pos.get(to);
     if (target !== null && colorOf(target) === color) continue;
-    out.push({ from, to, captured: target });
+    out.push(newMove(from, to, piece, target));
   }
 }
 
 // A pawn advances one square along the forward axis, and captures one square
 // forward diagonally across files (axis 0), optionally shifting to a higher, lower
 // or same layer (axis 2: z) in 3D/4D.
+// Every direction some sliding piece travels, each paired with the types that
+// travel it. Derived from the piece table rather than hardcoded, so a new
+// slider is picked up here the moment it is declared.
+const rayCache = new Map();
+function sliderRays(dims) {
+  if (!rayCache.has(dims)) {
+    const byKey = new Map();
+    for (const [type, def] of Object.entries(PIECES)) {
+      if (def.mode !== 'slide') continue;
+      for (const vector of vectorsFor(type, dims)) {
+        const key = vector.join(',');
+        if (!byKey.has(key)) byKey.set(key, { vector, types: new Set() });
+        byKey.get(key).types.add(type);
+      }
+    }
+    rayCache.set(dims, [...byKey.values()]);
+  }
+  return rayCache.get(dims);
+}
+
+const LEAPERS = Object.keys(PIECES).filter((type) => PIECES[type].mode === 'step');
+
+const pawnVectorCache = new Map();
+function pawnCaptureVectorsFor(dims, axis, direction) {
+  const key = `${dims}|${axis}|${direction}`;
+  if (!pawnVectorCache.has(key)) {
+    pawnVectorCache.set(key, pawnCaptureVectors(dims, axis, direction));
+  }
+  return pawnVectorCache.get(key);
+}
+
 function pawnCaptureVectors(dims, axis, direction) {
   if (dims < 2) return [];
   if (dims === 2) {
@@ -55,7 +95,7 @@ function pawnCaptureVectors(dims, axis, direction) {
   return vectors;
 }
 
-function pawnMoves(pos, from, color, out) {
+function pawnMoves(pos, from, piece, color, out) {
   const axis = forwardAxisOf(pos);
   const direction = forwardDirectionOf(pos, color);
   const coord = toCoord(pos.shape, from);
@@ -66,11 +106,11 @@ function pawnMoves(pos, from, color, out) {
   const forward = new Array(pos.dims).fill(0);
   forward[axis] = direction;
 
-  const push = (to, captured, extra = {}) => {
+  const push = (to, captured, ep = false) => {
     if (toCoord(pos.shape, to)[axis] === lastRank) {
-      for (const promotion of promotionsOf(pos)) out.push({ from, to, captured, promotion, ...extra });
+      for (const promotion of promotionsOf(pos)) out.push(newMove(from, to, piece, captured, promotion, ep));
     } else {
-      out.push({ from, to, captured, ...extra });
+      out.push(newMove(from, to, piece, captured, null, ep));
     }
   };
 
@@ -79,7 +119,7 @@ function pawnMoves(pos, from, color, out) {
     push(one, null);
     if (coord[axis] === startRank) {
       const two = step(pos.shape, coord, forward, 2);
-      if (two !== -1 && pos.get(two) === null) out.push({ from, to: two, captured: null, double: true });
+      if (two !== -1 && pos.get(two) === null) out.push(newMove(from, two, piece, null, null, false, true));
     }
   }
 
@@ -88,7 +128,7 @@ function pawnMoves(pos, from, color, out) {
     if (to === -1) continue;
     const target = pos.get(to);
     if (target !== null && colorOf(target) !== color) push(to, target);
-    else if (target === null && to === pos.ep) push(to, withColor('p', opposite(color)), { ep: true });
+    else if (target === null && to === pos.ep) push(to, withColor('p', opposite(color)), true);
   }
 }
 
@@ -99,7 +139,7 @@ function castlingMoves(pos, color, out) {
     if (pos.get(right.rookFrom) !== withColor('r', color)) continue;
     if (right.empty.some((index) => pos.get(index) !== null)) continue;
     if (right.safe.some((index) => isAttacked(pos, index, opposite(color)))) continue;
-    out.push({ from: right.kingFrom, to: right.kingTo, captured: null, castle: right.id });
+    out.push(newMove(right.kingFrom, right.kingTo, withColor('k', color), null, null, false, false, right.id));
   }
 }
 
@@ -185,47 +225,58 @@ export function pseudoMoves(pos, color = pos.turn) {
     if (piece === null || colorOf(piece) !== color) continue;
     const type = typeOf(piece);
     const mode = modeOf(type);
-    if (mode === 'pawn') pawnMoves(pos, from, color, out);
-    else if (mode === 'slide') slide(pos, from, vectorsFor(type, pos.dims), out, color);
-    else leap(pos, from, vectorsFor(type, pos.dims), out, color);
+    if (mode === 'pawn') pawnMoves(pos, from, piece, color, out);
+    else if (mode === 'slide') slide(pos, from, piece, vectorsFor(type, pos.dims), out, color);
+    else leap(pos, from, piece, vectorsFor(type, pos.dims), out, color);
   }
   castlingMoves(pos, color, out);
-  return out.map((move) => ({
-    promotion: null, ep: false, double: false, castle: null,
-    piece: pos.get(move.from), ...move,
-  }));
+  // No normalising pass: the generators emit finished moves, so this no longer
+  // allocates a second object for every one of the couple of hundred it made.
+  return out;
 }
 
+// Asked from the target square outward, not from every piece inward. The old
+// form visited all n^d squares and, for each enemy piece, tried every vector it
+// owns -- on an 8^4 board that is 4,096 squares against 80 directions. Probing
+// outward costs one walk per direction plus one lookup per leaper offset,
+// independent of how big the board is or how many pieces are on it.
+//
+// This is the hottest function in the engine: legality testing calls it once
+// per candidate move, and any search calls legality once per node.
 export function isAttacked(pos, index, byColor) {
-  for (let from = 0; from < pos.squares.length; from++) {
-    const piece = pos.get(from);
-    if (piece === null || colorOf(piece) !== byColor) continue;
-    const type = typeOf(piece);
-    const coord = toCoord(pos.shape, from);
+  const shape = pos.shape;
+  const coord = toCoord(shape, index);
 
-    if (type === 'p') {
-      const axis = forwardAxisOf(pos);
-      const direction = forwardDirectionOf(pos, byColor);
-      for (const vector of pawnCaptureVectors(pos.dims, axis, direction)) {
-        if (step(pos.shape, coord, vector) === index) return true;
-      }
-      continue;
+  // A pawn attacking this square stands one capture vector back from it.
+  const pawn = withColor('p', byColor);
+  const axis = forwardAxisOf(pos);
+  const direction = forwardDirectionOf(pos, byColor);
+  for (const vector of pawnCaptureVectorsFor(pos.dims, axis, direction)) {
+    const from = step(shape, coord, vector, -1);
+    if (from !== -1 && pos.squares[from] === pawn) return true;
+  }
+
+  // Leaper vector sets are closed under negation, so a piece that could jump
+  // here sits exactly one of its own vectors away, in either direction.
+  for (const type of LEAPERS) {
+    const piece = withColor(type, byColor);
+    for (const vector of vectorsFor(type, pos.dims)) {
+      const from = step(shape, coord, vector);
+      if (from !== -1 && pos.squares[from] === piece) return true;
     }
+  }
 
-    const vectors = vectorsFor(type, pos.dims);
-    if (modeOf(type) === 'slide') {
-      for (const vector of vectors) {
-        for (let distance = 1; ; distance++) {
-          const to = step(pos.shape, coord, vector, distance);
-          if (to === -1) break;
-          if (to === index) return true;
-          if (pos.get(to) !== null) break;
-        }
-      }
-    } else {
-      for (const vector of vectors) {
-        if (step(pos.shape, coord, vector) === index) return true;
-      }
+  // Walk out along each sliding direction. Only the first piece met matters:
+  // if it slides along the direction we arrived on it attacks, and either way
+  // it blocks everything behind it.
+  for (const ray of sliderRays(pos.dims)) {
+    for (let distance = 1; ; distance++) {
+      const to = step(shape, coord, ray.vector, distance);
+      if (to === -1) break;
+      const piece = pos.squares[to];
+      if (piece === null) continue;
+      if (colorOf(piece) === byColor && ray.types.has(typeOf(piece))) return true;
+      break;
     }
   }
   return false;
@@ -245,40 +296,109 @@ function midpoint(pos, move) {
   return toIndex(pos.shape, mid);
 }
 
-export function makeMove(pos, move) {
-  const next = pos.clone();
+// Applies a move in place and returns everything needed to take it back.
+// Search cannot afford makeMove's clone: at roughly 180 candidates a node, a
+// copy of the whole board per candidate dwarfs the move itself.
+//
+// `castling` is replaced rather than mutated, so the undo record can hold the
+// original array by reference instead of copying it.
+export function applyMove(pos, move) {
   const color = colorOf(move.piece);
   const type = typeOf(move.piece);
+  const undo = {
+    move,
+    turn: pos.turn,
+    castling: pos.castling,
+    ep: pos.ep,
+    halfmove: pos.halfmove,
+    fullmove: pos.fullmove,
+    from: pos.squares[move.from],
+    to: pos.squares[move.to],
+    epSquare: -1,
+    epPiece: null,
+    rookFrom: -1,
+    rookTo: -1,
+    rookFromPiece: null,
+    rookToPiece: null,
+  };
 
-  next.set(move.from, null);
+  pos.set(move.from, null);
   if (move.ep) {
     const captureCoord = toCoord(pos.shape, move.to);
     captureCoord[forwardAxisOf(pos)] -= forwardDirectionOf(pos, color);
-    next.set(toIndex(pos.shape, captureCoord), null);
+    undo.epSquare = toIndex(pos.shape, captureCoord);
+    undo.epPiece = pos.squares[undo.epSquare];
+    pos.set(undo.epSquare, null);
   }
-  next.set(move.to, move.promotion ? withColor(move.promotion, color) : move.piece);
+  pos.set(move.to, move.promotion ? withColor(move.promotion, color) : move.piece);
 
   if (move.castle) {
     const right = pos.variant.castling.find((r) => r.id === move.castle);
-    next.set(right.rookFrom, null);
-    next.set(right.rookTo, withColor('r', color));
+    undo.rookFrom = right.rookFrom;
+    undo.rookTo = right.rookTo;
+    undo.rookFromPiece = pos.squares[right.rookFrom];
+    undo.rookToPiece = pos.squares[right.rookTo];
+    pos.set(right.rookFrom, null);
+    pos.set(right.rookTo, withColor('r', color));
   }
 
   // Any move touching a king or rook home square spends the matching right.
-  next.castling = pos.castling.filter((id) => {
+  pos.castling = pos.castling.filter((id) => {
     const right = pos.variant.castling.find((r) => r.id === id);
     return ![right.kingFrom, right.rookFrom].some((sq) => sq === move.from || sq === move.to);
   });
 
-  next.ep = move.double ? midpoint(pos, move) : null;
-  next.halfmove = type === 'p' || move.captured ? 0 : pos.halfmove + 1;
-  next.fullmove = pos.fullmove + (color === BLACK ? 1 : 0);
-  next.turn = opposite(color);
+  // midpoint reads only the shape and the move's own coordinates, so it does
+  // not mind that the board has already changed underneath it.
+  pos.ep = move.double ? midpoint(pos, move) : null;
+  pos.halfmove = type === 'p' || move.captured ? 0 : pos.halfmove + 1;
+  pos.fullmove = pos.fullmove + (color === BLACK ? 1 : 0);
+  pos.turn = opposite(color);
+  return undo;
+}
+
+export function undoMove(pos, undo) {
+  const { move } = undo;
+  if (undo.rookFrom !== -1) {
+    pos.set(undo.rookFrom, undo.rookFromPiece);
+    pos.set(undo.rookTo, undo.rookToPiece);
+  }
+  pos.set(move.to, undo.to);
+  pos.set(move.from, undo.from);
+  if (undo.epSquare !== -1) pos.set(undo.epSquare, undo.epPiece);
+  pos.turn = undo.turn;
+  pos.castling = undo.castling;
+  pos.ep = undo.ep;
+  pos.halfmove = undo.halfmove;
+  pos.fullmove = undo.fullmove;
+}
+
+// The immutable form the UI is built on, defined in terms of the mutating one
+// so there is only ever one description of what a move does.
+export function makeMove(pos, move) {
+  const next = pos.clone();
+  applyMove(next, move);
   return next;
 }
 
+// Filters pseudo-moves down to the legal ones by playing each and asking
+// whether it leaves the king attacked, restoring the board as it goes. Mutates
+// `pos` and puts it back, so only call it on a board you own.
+export function legalMovesInPlace(pos, color = pos.turn) {
+  const moves = pseudoMoves(pos, color);
+  const legal = [];
+  for (const move of moves) {
+    const undo = applyMove(pos, move);
+    if (!inCheck(pos, color)) legal.push(move);
+    undoMove(pos, undo);
+  }
+  return legal;
+}
+
 export function legalMoves(pos, color = pos.turn) {
-  return pseudoMoves(pos, color).filter((move) => !inCheck(makeMove(pos, move), color));
+  // Cloned so a live game position is never touched. A search owns its board
+  // and calls legalMovesInPlace directly, skipping even this one copy.
+  return legalMovesInPlace(pos.clone(), color);
 }
 
 export function status(pos) {

@@ -18,8 +18,8 @@ const FILES = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: '
 // `far` is the outermost w layer and `near` is w = 1; pieceColorAt lerps from
 // one to the other by depth.
 export const PIECE_COLORS = {
-  white: { far: '#b9b3a6', near: '#e0d289' },
-  black: { far: '#293620', near: '#26408c' },
+  white: { far: '#b9b3a6', near: '#c96579' },
+  black: { far: '#293620', near: '#6a2678' },
 };
 
 const RAMP = {
@@ -144,6 +144,10 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // The rim is written from the matrices the solid and ghost batches already
   // hold, so it cannot drift out of step with them.
   let highlight = null;
+  // The square whose king is under attack, if any. It needs its own mask mesh
+  // rather than joining `outline`: OutlinePass carries one edge colour for the
+  // whole pass, so a red king and a gold selection cannot share one.
+  let checkLattice = null;
   let enabled = false;
   let capturable = new Set();
   let lastUpdateArgs = null;
@@ -186,6 +190,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       captureSolid: { mesh: makeMesh(homes.length, captureMaterial, geometry, 3), slots: homes },
       captureGhost: { mesh: makeMesh(ghosts.length, captureGhostMaterial, geometry, 2), slots: ghosts },
       outline: makeMesh(slots.length, outlineMaterial, geometry, 1),
+      checkOutline: makeMesh(slots.length, outlineMaterial, geometry, 1),
     });
   };
 
@@ -237,6 +242,32 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       group.outline.instanceMatrix.needsUpdate = true;
       group.outline.boundingSphere = null;
     }
+    writeCheckOutlines();
+  }
+
+  // Same idea as writeOutlines, narrowed to one square: every copy of the
+  // checked king, wherever the unfold has carried it.
+  function writeCheckOutlines() {
+    for (const group of groups.values()) {
+      if (group.checkOutline) group.checkOutline.visible = false;
+    }
+    if (!enabled || checkLattice === null) return;
+    const char = pieceAt(checkLattice);
+    const group = char ? groups.get(char.toLowerCase()) : null;
+    if (!group?.checkOutline) return;
+    let n = 0;
+    for (const part of [group.solid, group.ghost]) {
+      if (!part.mesh) continue;
+      part.slots.forEach((slot, i) => {
+        if (instances[slot].lattice !== checkLattice) return;
+        part.mesh.getMatrixAt(i, scratch);
+        group.checkOutline.setMatrixAt(n++, scratch);
+      });
+    }
+    group.checkOutline.count = n;
+    group.checkOutline.visible = n > 0;
+    group.checkOutline.instanceMatrix.needsUpdate = true;
+    group.checkOutline.boundingSphere = null;
   }
 
   return {
@@ -260,6 +291,13 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     setHighlight(lattice) {
       highlight = lattice;
       writeOutlines();
+    },
+    setCheck(lattice) {
+      checkLattice = lattice;
+      writeCheckOutlines();
+    },
+    checkOutlineTargets() {
+      return [...groups.values()].map(group => group.checkOutline).filter(mesh => mesh?.visible);
     },
     outlineTargets() {
       return [...groups.values()].map(group => group.outline).filter(mesh => mesh?.visible);
@@ -395,7 +433,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       }
       tossed.length = 0;
       for (const group of groups.values()) {
-        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }]) {
+        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }, { mesh: group.checkOutline }]) {
           if (!part?.mesh) continue;
           scene.remove(part.mesh);
           part.mesh.dispose();

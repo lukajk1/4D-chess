@@ -696,7 +696,8 @@ body:not(.inspection) .layout { height: calc(100vh - 46px); }
 /* The board picker sits at the head of the control stack, so it is sized and
    filled like the groups beneath it. The HUD around it is click-through, so
    this has to opt back in. */
-#variant {
+#variant,
+#opponent {
   pointer-events: auto;
   width: 100%;
   min-height: 38px;

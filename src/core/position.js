@@ -38,13 +38,20 @@ export function inBounds(shape, coord) {
 }
 
 // Returns the destination index, or -1 when the step leaves the board.
+// The single hottest call in the engine -- every ray of every piece walks
+// through it, thousands of times per move generation. It used to build a
+// coordinate array and hand it to toIndex; folding the index arithmetic into
+// the bounds loop gives the same answer with nothing allocated.
 export function step(shape, coord, vector, times = 1) {
-  const next = new Array(shape.length);
+  let index = 0;
+  let stride = 1;
   for (let axis = 0; axis < shape.length; axis++) {
-    next[axis] = coord[axis] + vector[axis] * times;
-    if (next[axis] < 0 || next[axis] >= shape[axis]) return -1;
+    const value = coord[axis] + vector[axis] * times;
+    if (value < 0 || value >= shape[axis]) return -1;
+    index += value * stride;
+    stride *= shape[axis];
   }
-  return toIndex(shape, next);
+  return index;
 }
 
 export class Position {
@@ -69,8 +76,18 @@ export class Position {
     return this.squares.indexOf(piece);
   }
 
+  // Remembered between calls. Legality testing asks for this once per
+  // candidate move, and indexOf over the whole board each time is the single
+  // most repeated scan in the engine. The guard re-reads one square to confirm
+  // the king is still where it was, so the cache stays correct across an
+  // applyMove/undoMove pair without either of them having to maintain it.
   kingIndex(color) {
-    return this.find(withColor('k', color));
+    const piece = withColor('k', color);
+    const cached = this._kings?.[color];
+    if (cached !== undefined && this.squares[cached] === piece) return cached;
+    const index = this.find(piece);
+    (this._kings ??= {})[color] = index;
+    return index;
   }
 
   clone() {
