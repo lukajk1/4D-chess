@@ -149,6 +149,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // OutlinePass carries one edge colour for the whole pass and a red king
   // cannot share it with a gold selection.
   let checkSquares = new Set();
+  let lastSquare = null;
   let enabled = false;
   let capturable = new Set();
   let lastUpdateArgs = null;
@@ -192,6 +193,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       captureGhost: { mesh: makeMesh(ghosts.length, captureGhostMaterial, geometry, 2), slots: ghosts },
       outline: makeMesh(slots.length, outlineMaterial, geometry, 1),
       checkOutline: makeMesh(slots.length, outlineMaterial, geometry, 1),
+      lastOutline: makeMesh(slots.length, outlineMaterial, geometry, 1),
     });
   };
 
@@ -249,6 +251,29 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
   // Same shape as writeOutlines, filtered to the squares a check involves.
   // Every group is walked, not just the king's: an attacker can be any type,
   // and there can be more than one of them.
+  // The piece that just landed. One square rather than the move's whole pair:
+  // the origin is empty, so there is no model there to outline.
+  function writeLastOutlines() {
+    for (const group of groups.values()) {
+      if (!group.lastOutline) continue;
+      group.lastOutline.visible = false;
+      if (!enabled || lastSquare === null) continue;
+      let n = 0;
+      for (const part of [group.solid, group.ghost]) {
+        if (!part.mesh) continue;
+        part.slots.forEach((slot, i) => {
+          if (instances[slot].lattice !== lastSquare) return;
+          part.mesh.getMatrixAt(i, scratch);
+          group.lastOutline.setMatrixAt(n++, scratch);
+        });
+      }
+      group.lastOutline.count = n;
+      group.lastOutline.visible = n > 0;
+      group.lastOutline.instanceMatrix.needsUpdate = true;
+      group.lastOutline.boundingSphere = null;
+    }
+  }
+
   function writeCheckOutlines() {
     for (const group of groups.values()) {
       if (!group.checkOutline) continue;
@@ -298,6 +323,16 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
     },
     checkOutlineTargets() {
       return [...groups.values()].map(group => group.checkOutline).filter(mesh => mesh?.visible);
+    },
+    setLastMove(lattice) {
+      lastSquare = lattice ?? null;
+      writeLastOutlines();
+    },
+    lastOutlineTargets() {
+      // The selected piece already carries the brighter selection outline, so
+      // it is left to that rather than being drawn twice.
+      if (lastSquare !== null && lastSquare === highlight) return [];
+      return [...groups.values()].map(group => group.lastOutline).filter(mesh => mesh?.visible);
     },
     outlineTargets() {
       return [...groups.values()].map(group => group.outline).filter(mesh => mesh?.visible);
@@ -366,6 +401,8 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
         }
       }
       writeOutlines();
+      writeCheckOutlines();
+      writeLastOutlines();
     },
     spawnTossed(char, [x, y, z], scale = 1, opacity = 1) {
       if (!char) return;
@@ -433,7 +470,7 @@ export function createModelPieces(scene, instances, pieceAt, onLoad, outlineColo
       }
       tossed.length = 0;
       for (const group of groups.values()) {
-        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }, { mesh: group.checkOutline }]) {
+        for (const part of [group.solid, group.ghost, group.captureSolid, group.captureGhost, { mesh: group.outline }, { mesh: group.checkOutline }, { mesh: group.lastOutline }]) {
           if (!part?.mesh) continue;
           scene.remove(part.mesh);
           part.mesh.dispose();

@@ -38,6 +38,11 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     char: lastMove.captured,
     square: lastMove.to,
   } : null;
+  // The move just played, kept after its animation ends so both its squares
+  // stay marked until the next one replaces it. animatingMove is cleared the
+  // moment the piece lands, which is why this is tracked separately.
+  const landedOn = (move) => (move && move.to !== undefined ? move.to : null);
+  let lastPlayed = landedOn(lastMove);
   // The explorer restores its previous fold state immediately after creation.
   // Wait one animation frame before placing capture debris so clone positions
   // reflect that restored state instead of the initially folded geometry.
@@ -86,14 +91,14 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
         <input class="fold-slider" aria-label="Fold" type="range" min="0" max="1" step="0.005" value="0">
       </div>
       <button class="unfold">Unfold</button>
-      ${['XZ', 'YZ', 'ZW'].map((plane, i) => `<div class="control">
+      ${['XW', 'YW', 'ZW'].map((plane, i) => `<div class="control">
         <span class="control-label">${plane} rotation <output class="rotation-value" data-plane="${i}">0°</output></span>
         <div class="rotation-input-row">
           <input class="rotation-slider" data-plane="${i}" aria-label="${plane} rotation" type="range" min="0" max="1" step="0.001" value="0">
           <button class="plane-rotation-toggle" data-plane="${i}" type="button" aria-pressed="false">Play</button>
         </div>
       </div>`).join('')}
-      <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XZ, YZ, and ZW planes">Play 4D rotation</button>
+      <button class="rotation-toggle" aria-pressed="false" title="Rotate in the XW, YW, and ZW planes">Play 4D rotation</button>
       <button class="reset-rotations" type="button">Reset all rotations</button>
         </div>
       </details>` : ''}
@@ -295,8 +300,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   const wScaleAt = (w, K) => (is4D ? K / (K - (w - center[3]) / (center[3] || 1)) : 1);
 
   // A coordinate axis belongs to three independent planes in 4D. Rotating in
-  // all three planes containing z gives the point cloud a true 4D motion: XZ
-  // and YZ turn its spatial silhouette while ZW changes apparent 4D depth.
+  // all three planes containing w makes every turn a genuinely four-dimensional
+  // one: each carries geometry through w, so the nesting rearranges rather than
+  // the silhouette merely spinning.
   let wMode = 'nested';
   // How far apart consecutive w slices are drawn. The two projections reach
   // that differently -- nested moves the 4D camera in, oblique lengthens its
@@ -328,18 +334,18 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     return dz + dw * outward;
   };
 
-  const zPlanes = [[0, 2], [1, 2], [2, 3]];
+  const wPlanes = [[0, 3], [1, 3], [2, 3]];
   const TAU = Math.PI * 2;
   const rotationAngles = new Float64Array(3);
-  // XZ, YZ, ZW, all at one rate; YZ differs only in sign, so it counter-turns.
+  // XW, YW, ZW, all at one rate; YW differs only in sign, so it counter-turns.
   // Equal rates mean the three planes stay in step and the combined motion
   // repeats, where three incommensurate ones would not -- deliberate, so the
   // turn reads as a single rotation rather than a drift.
   const rotationSpeeds = [.1496, -.1496, .1496];
   const rotated4 = [0, 0, 0, 0];
-  function rotateThroughZPlanes(c) {
+  function rotateThroughWPlanes(c) {
     for (let axis = 0; axis < 4; axis++) rotated4[axis] = c[axis] - center[axis];
-    zPlanes.forEach(([a, b], i) => {
+    wPlanes.forEach(([a, b], i) => {
       const cos = Math.cos(rotationAngles[i]);
       const sin = Math.sin(rotationAngles[i]);
       const va = rotated4[a];
@@ -362,7 +368,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
 
   // Project a 4D point for a given camera, scale and spacing. Returns wScale.
   function projectAt(c, K, g, sp, out) {
-    const q = is4D ? rotateThroughZPlanes(c) : c;
+    const q = is4D ? rotateThroughWPlanes(c) : c;
     if (is4D && wMode === 'oblique') {
       const dw = (q[3] - center[3]) * OBLIQUE_STEP * wSpread;
       out[0] = ((q[0] - center[0]) + dw * OBLIQUE_DIR[0]) * g;
@@ -891,6 +897,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     // the check pass on every update, so setting this before the models have
     // loaded is fine; it lands as soon as there is something to outline.
     modelPieces.setCheck(checkSquares());
+    // A fresh modelPieces knows nothing of the move already played, and
+    // setPosition rebuilds it on every one, so the mark is reapplied here.
+    modelPieces.setLastMove(animatingMove ? null : lastPlayed);
   }
   buildModelPieces();
   const renderPass = new RenderPass(scene, camera);
@@ -926,6 +935,17 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   checkPass.visibleEdgeColor.set('#ff3b30');
   checkPass.hiddenEdgeColor.set('#000000');
   composer.addPass(checkPass);
+  // A third pass for the move just played, for the same reason the check pass
+  // exists: OutlinePass carries one edge colour, so a second colour needs a
+  // second pass. Softer than both -- the move that just happened is context,
+  // not something being pointed at.
+  const lastPass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
+  lastPass.edgeStrength = 3;
+  lastPass.edgeGlow = .5;
+  lastPass.edgeThickness = 1.2;
+  lastPass.visibleEdgeColor.set(theme.last);
+  lastPass.hiddenEdgeColor.set('#000000');
+  composer.addPass(lastPass);
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
 
@@ -950,6 +970,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   halo.renderOrder = 3;
   halo.visible = false;
   scene.add(halo);
+
 
   // ---- move envelope, drawn as the cells a piece could reach
   // A lattice point is the middle of a cell's floor -- it is where a piece model
@@ -1137,6 +1158,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     haloGeometry.computeBoundingSphere();
   }
 
+
   // Coincident copies of a shared vertex show their cells' average; each one
   // resolves to its own cell's colour as that cell swings away from the rest.
   function applyColors() {
@@ -1213,6 +1235,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       arcY = Math.sin(Math.PI * progress);
       if (progress >= 1) {
         animatingMove = null;
+        modelPieces.setLastMove(lastPlayed);
       }
     }
 
@@ -1594,6 +1617,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     renderPass.camera = next;
     outlinePass.renderCamera = next;
     checkPass.renderCamera = next;
+    lastPass.renderCamera = next;
     pointMaterial.uniforms.uPerspective.value = kind === 'perspective' ? 1 : 0;
     controls.update();
     needsRender = true;
@@ -1963,6 +1987,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       outlinePass.visibleEdgeColor.set(modelPieces.outlineColor());
       outlinePass.edgeStrength = modelPieces.outlineStrength();
       checkPass.selectedObjects = modelPieces.checkOutlineTargets();
+      lastPass.selectedObjects = modelPieces.lastOutlineTargets();
       composer.render();
       needsRender = false;
     }
@@ -2159,6 +2184,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
         from: move.from, to: move.to, piece: move.piece,
         startTime: performance.now(), duration: 250,
       } : null;
+      // A position set with no move -- an undo, an import, a new game -- clears
+      // the mark rather than leaving the previous game's move standing.
+      lastPlayed = landedOn(move);
+      // Held back until the piece stops travelling, so the glow appears on it
+      // where it lands rather than following it across the board.
+      modelPieces.setLastMove(animatingMove ? null : lastPlayed);
       capturedToSpawn = move?.captured && move.to !== undefined
         ? { char: move.captured, square: move.to } : null;
       captureSpawnReady = false;

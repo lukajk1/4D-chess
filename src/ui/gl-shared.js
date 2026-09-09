@@ -58,6 +58,7 @@ export const readTheme = () => {
     muted: pick('--muted', '#6b7480'),
     selected: pick('--selected', '#e8c27d'),
     accent: pick('--accent', '#6ba585'),
+    last: pick('--last', '#d9dba8'),
   };
 };
 
