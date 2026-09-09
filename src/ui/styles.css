@@ -716,7 +716,8 @@ body:not(.inspection) .layout { height: calc(100vh - 46px); }
    this has to opt back in. */
 #variant,
 #opponent,
-#explain {
+#explain,
+#about {
   pointer-events: auto;
   width: 100%;
   min-height: 38px;
@@ -745,7 +746,8 @@ body:not(.inspection) .layout { height: calc(100vh - 46px); }
 }
 #variant:hover,
 #opponent:hover { border-color: var(--accent); }
-#explain {
+#explain,
+#about {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -790,9 +792,16 @@ body:not(.inspection) .layout { height: calc(100vh - 46px); }
 }
 .explain-body h1 { margin: 0 0 18px; font-size: 25px; }
 .explain-body h2 { margin: 34px 0 12px; font-size: 18px; }
-.explain-body p { margin: 0 0 14px; max-width: 62ch; }
+.explain-body p { margin: 0 0 14px; max-width: 74ch; }
 .explain-body em { color: var(--ink); }
 .explain-note { font-size: 13.5px; color: var(--muted); }
+
+/* Prior art, in the about dialog. A plain list of links rather than prose, so
+   it sits tighter than the paragraphs around it. */
+.about-links { margin: 0 0 14px; padding-left: 20px; max-width: 74ch; }
+.about-links li { margin-bottom: 5px; }
+.explain-body a { color: inherit; text-underline-offset: 2px; }
+.explain-body a:hover { text-decoration-thickness: 2px; }
 
 /* The canvas sets its own aspect ratio -- each figure holds a different number
    of panels -- so this only has to give it somewhere to sit. */

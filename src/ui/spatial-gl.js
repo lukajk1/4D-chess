@@ -79,7 +79,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       ${is4D ? segmented('Spacing', 'Cell shape', [['even', 'Normalized'], ['cube', 'Cube']], 'even') : ''}
       ${segmented('Space style', 'Space style', [['opaque', 'Opaque'], ['squares', 'Translucent'], ['verts', 'Points']], 'opaque')}
       ${segmented('Axis labels', 'Axis labels', [['on', 'On'], ['off', 'Off']], 'on')}
-      ${segmented('Square notation', 'Square notation', [['on', 'On'], ['off', 'Off']], 'off')}
+      <!-- Square notation has no control any more, so it stays off. The handler
+           and the state save/restore still work; putting the toggle back is one
+           segmented() line here. -->
       ${is4D ? '' : `<label>Layer <select aria-label="Visible layer"><option value="all">All ${pos.shape[2]} layers</option>${Array.from({ length: pos.shape[2] }, (_, z) => `<option value="${z}">Layer ${z + 1}</option>`).join('')}</select></label>`}
         </div>
       </details>

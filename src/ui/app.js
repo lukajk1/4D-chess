@@ -16,6 +16,7 @@ const els = {
   variant: document.querySelector('#variant'),
   opponent: document.querySelector('#opponent'),
   explain: document.querySelector('#explain'),
+  about: document.querySelector('#about'),
   boardArea: document.querySelector('#board-area'),
   status: document.querySelector('#status'),
   history: document.querySelector('#history'),
@@ -256,7 +257,7 @@ function refreshExplorer(pos, lastMove = null) {
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
-    hud.append(brand, moveDisplay, els.variant, els.opponent, els.explain);
+    hud.append(brand, moveDisplay, els.variant, els.opponent, els.explain, els.about);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
@@ -686,6 +687,67 @@ els.explain.addEventListener('click', () => {
   else location.hash = HASH;
 });
 syncExplanation();
+
+// The about dialog, built the same way as the explanation one and sharing its
+// styles. No figures, so there is nothing to start and stop with the dialog --
+// which is the whole of the difference between the two.
+const ABOUT_HASH = '#about';
+let aboutDialog = null;
+let aboutPending = null;
+
+async function buildAboutDialog() {
+  const { aboutHTML } = await import('./about.js');
+  const dialog = document.createElement('dialog');
+  dialog.className = 'explain-dialog';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'explain-close';
+  close.setAttribute('aria-label', 'Close');
+  close.textContent = '×';
+  close.addEventListener('click', () => dialog.close());
+  const body = document.createElement('div');
+  body.className = 'explain-body';
+  body.innerHTML = aboutHTML;
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    if (location.hash === ABOUT_HASH) history.replaceState(null, '', location.pathname + location.search);
+  });
+  dialog.append(close, body);
+  document.body.append(dialog);
+  return dialog;
+}
+
+async function openAbout() {
+  if (!aboutDialog) {
+    els.about.disabled = true;
+    try {
+      aboutPending ??= buildAboutDialog();
+      aboutDialog = await aboutPending;
+    } catch (error) {
+      aboutPending = null;
+      toast('Could not load the about page');
+      return;
+    } finally {
+      els.about.disabled = false;
+    }
+  }
+  if (aboutDialog.open) return;
+  aboutDialog.querySelector('.explain-body').scrollTop = 0;
+  aboutDialog.showModal();
+}
+
+function syncAbout() {
+  if (location.hash === ABOUT_HASH) openAbout();
+  else aboutDialog?.close();
+}
+window.addEventListener('hashchange', syncAbout);
+els.about.addEventListener('click', () => {
+  if (location.hash === ABOUT_HASH) openAbout();
+  else location.hash = ABOUT_HASH;
+});
+syncAbout();
 
 els.variant.addEventListener('change', (event) => newGame(event.target.value));
 // Restarting on change is what makes this "choose before you play": swapping
