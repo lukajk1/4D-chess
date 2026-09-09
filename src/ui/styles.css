@@ -865,3 +865,91 @@ body:not(.inspection) main { padding: 12px 22px 22px; }
   .explorer-main .cube-canvas { height: 100%; min-height: 0; }
   .explorer-side { border-left: 1px solid var(--line); padding-left: 16px; }
 }
+
+/* ---------------------------------------------------------------------------
+   Portrait phones.
+
+   The desktop explorer floats its HUD and control column over a large canvas.
+   Below ~700px there is nothing to float over: the overlays land on top of the
+   board and each other. So this breakpoint changes the layout model rather
+   than the sizes -- everything becomes a normal block in one column, and the
+   board is given a fixed slice of the viewport in the middle of it.
+
+   The canvas keeps `touch-action: none` because the viewer needs raw pointer
+   events to orbit. That means a drag starting on the board never scrolls the
+   page, which is why the board is capped at 52vh: the chrome above and below
+   it has to be reachable without ever touching the canvas.
+   --------------------------------------------------------------------------- */
+@media (max-width: 700px) {
+  .inspection main { padding: 10px 12px 28px; }
+
+  /* One column, no forced viewport height: the page scrolls instead. */
+  .explorer-shell { flex-direction: column; height: auto; min-height: 0; gap: 14px; }
+
+  /* The two overlays become blocks. Order is set on the flex parent below, so
+     the HUD reads above the board and the controls below it. */
+  .explorer-hud,
+  .explorer-controls {
+    position: static;
+    width: 100%;
+    inset: auto;
+    padding: 0;
+    overflow: visible;
+    pointer-events: auto;
+  }
+  .explorer-hud { gap: 10px; text-shadow: none; }
+
+  /* .explorer-main holds the board, the HUD and the control column as
+     siblings; stacking it puts them in a readable order rather than the source
+     order the absolute positioning made irrelevant. */
+  .explorer-main { display: flex; flex-direction: column; gap: 12px; }
+  .explorer-hud { order: 1; }
+  .explorer-main > .cube-view { order: 2; }
+  .explorer-controls { order: 3; }
+
+  /* A fixed slice of the screen, so the controls under it are always in reach.
+     aspect-ratio would make the board as tall as it is wide and push them off. */
+  .explorer-main .cube-canvas {
+    flex: none;
+    height: 52vh;
+    min-height: 0;
+    aspect-ratio: auto;
+  }
+
+  /* Chrome shrinks so the board keeps the room. The byline is the first thing
+     to go: it is credit, not gameplay, and the About dialog carries it too. */
+  /* The credit line stays -- it is attribution, and the asset licence has to
+     be reachable -- but it goes on one row beside itself rather than stacking
+     two 18px lines above the board. */
+  .explorer-brand { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .explorer-brand strong { font-size: 19px; flex: 0 0 100%; }
+  .explorer-brand a,
+  .explorer-brand .credit-link { margin-top: 0; font-size: 12px; }
+  .explorer-turn { font-size: 17px; }
+  .explorer-last-move { font-size: 12px; }
+  .explorer-move-display { min-width: 0; }
+
+  /* Two per row: the selects pair, then the two dialog buttons. */
+  .explorer-hud { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+  .explorer-brand,
+  .explorer-move-display { grid-column: 1 / -1; }
+
+  /* Controls sit under the board, shut, as full-width disclosure rows. */
+  .cube-controls { display: flex; flex-direction: column; gap: 10px; }
+  .control-group { width: 100%; }
+
+  /* Comfortable touch targets. 38px is fine with a mouse and small with a
+     thumb; 44px is the usual floor. */
+  #variant, #opponent, #about, #explain,
+  .segmented button,
+  .explorer-toolbar button,
+  .control-group > summary { min-height: 44px; }
+  .rotation-slider, .fold-slider { height: 30px; }
+  .plane-rotation-toggle { flex-basis: 68px; min-height: 36px; }
+
+  /* Dialogs take the whole screen rather than sitting in a margin. */
+  .explain-dialog { width: 100vw; max-width: 100vw; max-height: 100vh; border: 0; border-radius: 0; }
+  .explain-body { max-height: 100vh; padding: 22px 18px 34px; font-size: 14.5px; }
+  .explain-body h1 { font-size: 21px; }
+  .explain-close { top: 10px; right: 10px; }
+}

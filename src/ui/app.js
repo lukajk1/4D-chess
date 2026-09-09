@@ -257,7 +257,7 @@ function refreshExplorer(pos, lastMove = null) {
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
-    hud.append(brand, moveDisplay, els.variant, els.opponent, els.explain, els.about);
+    hud.append(brand, moveDisplay, els.variant, els.opponent, els.about, els.explain);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
@@ -351,7 +351,9 @@ function refreshExplorer(pos, lastMove = null) {
     // on the engine's turn so it immediately replays and the move appears
     // un-undoable. Taking back two plies is the fix; until then the button
     // stays in the hidden .game-state row, wired but unreachable.
-    toolbar.append(els.reset);
+    // Reset position is not docked either: it restarts without confirming, and
+    // the toolbar is no place for that. The button, its label and its newGame()
+    // handler are untouched, so appending it here puts it back.
     if (controls) {
       controls.append(toolbar);
       controlsPanel.append(controls);
