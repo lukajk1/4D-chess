@@ -83,13 +83,14 @@ function hypercubeVariant(n) {
   // The 3D game pulled apart along w: black occupies w = 1 and white occupies
   // w = n. The nested projection enlarges the high-w side, so the first-moving
   // white army also receives the visually easier targets.
+  //
+  // The two armies are separated on y as well, which is the mirror layoutArmies
+  // already applies: white keeps the low ranks and black takes y = n-1 and
+  // n-2. So the sides differ on both axes their pawns advance along, rather
+  // than sharing one (x, y, z) footprint and meeting only across w.
   const royalLayers = layoutArmies(n, (x, y, z, piece) => {
     const white = piece === piece.toUpperCase();
-    // layoutArmies mirrors black across y so the two sides face along y. Here
-    // they face along w instead, so undo that mirror: both armies share one
-    // (x, y, z) footprint and differ only in w, putting the entire separation
-    // on the single axis being pulled apart -- as e1 and e8 share a file.
-    pos.set(pos.index([x, white ? y : n - 1 - y, z, white ? n - 1 : 0]), piece);
+    pos.set(pos.index([x, y, z, white ? n - 1 : 0]), piece);
   });
 
   // Both back ranks sit in the y = 0 plane, so the pawns are a plane too: the

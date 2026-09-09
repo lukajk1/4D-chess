@@ -275,9 +275,10 @@ function refreshExplorer(pos, lastMove = null) {
     // in one dimension live in their own modules and are simply absent from
     // the list for the others, so this table is the only place the shell has
     // to know about dimension at all.
-    const defs = [
-      { id: 'slices', label: 'Slices', make: () => buildSlices(state.position) },
-    ];
+    // Slices has no button any more, so the list is empty and the side panel
+    // stays closed. buildSlices and the docking machinery are untouched;
+    // putting it back is one entry here.
+    const defs = [];
 
     const toolbar = document.createElement('div');
     toolbar.className = 'explorer-toolbar';
