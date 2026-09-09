@@ -15,8 +15,7 @@ document.addEventListener('keydown', unlockAudio);
 const els = {
   variant: document.querySelector('#variant'),
   opponent: document.querySelector('#opponent'),
-  explain: document.querySelector('#explain'),
-  about: document.querySelector('#about'),
+  info: document.querySelector('#info'),
   boardArea: document.querySelector('#board-area'),
   status: document.querySelector('#status'),
   history: document.querySelector('#history'),
@@ -257,7 +256,7 @@ function refreshExplorer(pos, lastMove = null) {
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
-    hud.append(brand, moveDisplay, els.variant, els.opponent, els.about, els.explain);
+    hud.append(brand, moveDisplay, els.variant, els.opponent, els.info);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
@@ -605,152 +604,158 @@ for (const [key, options] of [['', 'Two players'], ...Object.entries(difficultie
 }
 els.opponent.value = state.opponent ?? '';
 
-// Built on first open and kept afterwards. The prose is the whole of
-// explanation.js, which is a lot of bytes for something most visitors will
-// never open, so it is fetched by the first open rather than by the page load.
-const HASH = '#explanation';
-let explainDialog = null;
-let explainPending = null;
+// One dialog, three tabs. Built on first open and kept afterwards: the prose is
+// three modules' worth of bytes for something most visitors never open, so it
+// is fetched by the first open rather than by the page load.
+//
+// The hash carries which tab is showing, so a link can point at any of them and
+// Back steps between them.
+const TABS = [
+  // The rules tab is out of the dialog for now. src/ui/rules.js still holds its
+  // prose; putting it back is this entry, restored to the front of the list.
+  // { id: 'game', hash: '#game', label: 'The game', load: () => import('./rules.js').then((m) => m.rulesHTML) },
+  { id: 'about', hash: '#about', label: 'About', load: () => import('./about.js').then((m) => m.aboutHTML) },
+  { id: 'explanation', hash: '#explanation', label: '4D', load: () => import('./explanation.js').then((m) => m.explanationHTML) },
+];
+const HASHES = TABS.map((tab) => tab.hash);
+const tabFor = (hash) => TABS.find((tab) => tab.hash === hash) ?? null;
 
-async function buildExplanationDialog() {
-  // One lazy step, two modules: the prose and the figures that go in it are
-  // useless apart, and neither is wanted until the dialog is asked for.
-  const [{ explanationHTML }, { mountVisuals }] = await Promise.all([
-    import('./explanation.js'),
+let infoDialog = null;
+let infoPending = null;
+let activeTab = null;
+
+async function buildInfoDialog() {
+  // The figures belong to one tab only, but the module that mounts them is
+  // wanted the moment that tab is, so it comes along with the prose.
+  const [{ mountVisuals }, ...bodies] = await Promise.all([
     import('./explanation-visuals.js'),
+    ...TABS.map((tab) => tab.load()),
   ]);
+
   const dialog = document.createElement('dialog');
   dialog.className = 'explain-dialog';
+
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'explain-close';
   close.setAttribute('aria-label', 'Close');
   close.textContent = '×';
   close.addEventListener('click', () => dialog.close());
+
+  const tablist = document.createElement('div');
+  tablist.className = 'explain-tabs';
+  tablist.setAttribute('role', 'tablist');
+
   const body = document.createElement('div');
   body.className = 'explain-body';
-  body.innerHTML = explanationHTML;
-  // A click that lands on the dialog element itself, rather than on the body
-  // filling it, is a click on the backdrop. The dialog carries no padding of
-  // its own, so there is no third case.
+
+  const panels = new Map();
+  TABS.forEach((tab, i) => {
+    const panel = document.createElement('div');
+    panel.className = 'explain-panel';
+    panel.id = `info-panel-${tab.id}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.innerHTML = bodies[i];
+    panel.hidden = true;
+    body.append(panel);
+    panels.set(tab.id, panel);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'explain-tab';
+    button.textContent = tab.label;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', panel.id);
+    button.setAttribute('aria-selected', 'false');
+    // Writing the hash rather than switching directly, so every route in --
+    // a click, a shared link, Back -- lands in the same place.
+    button.addEventListener('click', () => {
+      if (location.hash === tab.hash) show(tab.id);
+      else location.hash = tab.hash;
+    });
+    tablist.append(button);
+    tab.button = button;
+  });
+
+  // Arrow keys move between tabs, which is what a tablist is expected to do.
+  tablist.addEventListener('keydown', (event) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const i = TABS.findIndex((tab) => tab.id === activeTab);
+    const next = TABS[(i + step + TABS.length) % TABS.length];
+    location.hash = next.hash;
+    next.button.focus();
+  });
+
+  function show(id) {
+    activeTab = id;
+    for (const tab of TABS) {
+      const on = tab.id === id;
+      panels.get(tab.id).hidden = !on;
+      tab.button.setAttribute('aria-selected', String(on));
+      tab.button.tabIndex = on ? 0 : -1;
+    }
+    // Each tab starts at its own top rather than inheriting the last scroll.
+    body.scrollTop = 0;
+    // The figures only run while their tab is the one showing.
+    if (id === 'explanation') dialog.visuals.start();
+    else dialog.visuals.stop();
+  }
+
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
   });
-  // The X, a backdrop click and Esc all end here, so the URL is tidied once
-  // for all three. replaceState rather than another hash write: closing should
-  // not leave a history entry for the player to walk back into.
   dialog.addEventListener('close', () => {
-    if (location.hash === HASH) history.replaceState(null, '', location.pathname + location.search);
+    dialog.visuals.stop();
+    if (HASHES.includes(location.hash)) {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
   });
-  dialog.append(close, body);
+
+  dialog.append(close, tablist, body);
   // On <body>, not in the shell: the shell is rebuilt on every move.
   document.body.append(dialog);
-  // Mounted once, run only while the dialog is up -- a closed dialog is
-  // display:none, so a frame loop behind it would be three canvases of nothing.
-  const visuals = mountVisuals(body);
-  dialog.addEventListener('close', visuals.stop);
-  dialog.visuals = visuals;
+  // Mounted against the whole body, so the figures are found wherever their
+  // panel sits; they are started and stopped by show().
+  dialog.visuals = mountVisuals(body);
+  dialog.visuals.stop();
+  dialog.show = show;
   return dialog;
 }
 
-async function openExplanation() {
-  if (!explainDialog) {
-    els.explain.disabled = true;
+async function openInfo(hash) {
+  const tab = tabFor(hash) ?? TABS[0];
+  if (!infoDialog) {
+    els.info.disabled = true;
     try {
-      // One build however many times this is called: a click and a hashchange
-      // can both arrive before the import resolves.
-      explainPending ??= buildExplanationDialog();
-      explainDialog = await explainPending;
+      infoPending ??= buildInfoDialog();
+      infoDialog = await infoPending;
     } catch (error) {
-      explainPending = null;
+      infoPending = null;
       toast('Could not load the explanation');
       return;
     } finally {
-      els.explain.disabled = false;
+      els.info.disabled = false;
     }
   }
-  if (explainDialog.open) return;
-  explainDialog.querySelector('.explain-body').scrollTop = 0;
-  explainDialog.showModal();
-  explainDialog.visuals.start();
+  infoDialog.show(tab.id);
+  if (!infoDialog.open) infoDialog.showModal();
 }
 
 // The hash is the state rather than a one-shot trigger, so every way in and out
-// agrees: a shared link opens the dialog, the button opens it by writing the
-// hash, and Back closes it.
-function syncExplanation() {
-  if (location.hash === HASH) openExplanation();
-  else explainDialog?.close();
+// agrees: a shared link opens the right tab, the button opens it by writing the
+// hash, and Back closes or steps between tabs.
+function syncInfo() {
+  if (HASHES.includes(location.hash)) openInfo(location.hash);
+  else infoDialog?.close();
 }
-window.addEventListener('hashchange', syncExplanation);
-els.explain.addEventListener('click', () => {
-  // Writing a hash that is already set fires no hashchange, so that case opens
-  // directly. It happens when the page was loaded on the link and then closed.
-  if (location.hash === HASH) openExplanation();
-  else location.hash = HASH;
+window.addEventListener('hashchange', syncInfo);
+els.info.addEventListener('click', () => {
+  if (HASHES.includes(location.hash)) openInfo(location.hash);
+  else location.hash = TABS[0].hash;
 });
-syncExplanation();
-
-// The about dialog, built the same way as the explanation one and sharing its
-// styles. No figures, so there is nothing to start and stop with the dialog --
-// which is the whole of the difference between the two.
-const ABOUT_HASH = '#about';
-let aboutDialog = null;
-let aboutPending = null;
-
-async function buildAboutDialog() {
-  const { aboutHTML } = await import('./about.js');
-  const dialog = document.createElement('dialog');
-  dialog.className = 'explain-dialog';
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'explain-close';
-  close.setAttribute('aria-label', 'Close');
-  close.textContent = '×';
-  close.addEventListener('click', () => dialog.close());
-  const body = document.createElement('div');
-  body.className = 'explain-body';
-  body.innerHTML = aboutHTML;
-  dialog.addEventListener('click', (event) => {
-    if (event.target === dialog) dialog.close();
-  });
-  dialog.addEventListener('close', () => {
-    if (location.hash === ABOUT_HASH) history.replaceState(null, '', location.pathname + location.search);
-  });
-  dialog.append(close, body);
-  document.body.append(dialog);
-  return dialog;
-}
-
-async function openAbout() {
-  if (!aboutDialog) {
-    els.about.disabled = true;
-    try {
-      aboutPending ??= buildAboutDialog();
-      aboutDialog = await aboutPending;
-    } catch (error) {
-      aboutPending = null;
-      toast('Could not load the about page');
-      return;
-    } finally {
-      els.about.disabled = false;
-    }
-  }
-  if (aboutDialog.open) return;
-  aboutDialog.querySelector('.explain-body').scrollTop = 0;
-  aboutDialog.showModal();
-}
-
-function syncAbout() {
-  if (location.hash === ABOUT_HASH) openAbout();
-  else aboutDialog?.close();
-}
-window.addEventListener('hashchange', syncAbout);
-els.about.addEventListener('click', () => {
-  if (location.hash === ABOUT_HASH) openAbout();
-  else location.hash = ABOUT_HASH;
-});
-syncAbout();
+syncInfo();
 
 els.variant.addEventListener('change', (event) => newGame(event.target.value));
 // Restarting on change is what makes this "choose before you play": swapping

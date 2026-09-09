@@ -9,7 +9,7 @@ export const explanationHTML = `
 
   <p>Chess in four spatial dimensions, of course.</p>
 
-  <p>Normal (boring) chess is played on a two-dimensional grid. To create 3D
+  <p>Standard chess is played on a two-dimensional grid. To create 3D
   chess we stack eight of those grids along a new axis — upwards — getting a
   chess <strong>cube</strong>. Stacking eight cubes along another new axis —
   inwards<span class="explain-mark">*</span> — results in a chess

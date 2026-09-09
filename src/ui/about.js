@@ -26,20 +26,23 @@ export const aboutHTML = `
     <li><a href="https://www.youtube.com/watch?v=XvH20cbuLK0" target="_blank" rel="noopener noreferrer">Movement of 4D Chess (video)</a></li>
   </ul>-->
 
-  <p>That possibly makes the Astra visualization the first ever, surprisingly. I
-  expected someone to have done it in the past. This project might be the second example, then! The traditional layout
+  <p>That potentially makes the Astra 4D chess visualization on a tesseract the first ever, surprisingly. I
+  expected someone to have done it in the past, given how long experimentation with a spatial 4th dimension and chess have existed for. </p>
+  <!--
+  The traditional layout
   for 4D chess tends to be 16 grids of 4&times;4 dimensions — halved from the
   standard 8&times;8 board for the sake of manageability. The Astra
   visualization only used 4&times;4&times;2&times;2: two boards along z, and two
-  along w. That was just not exciting enough! So I set out to visualize a
+  along w. However, I o I set out to visualize a
   4&times;4&times;4&times;4 and 8&times;8&times;8&times;8 board in its true
   glory.</p>
 
-  <p>Consequently, I realized laying out the board this way was kind of stupid.
+  <p>Naturally, laying out the board this way is not pragmatic.
   It makes the game even more unwieldy to play, and the structure of laying out
   the 16 boards in a 1&times;4&times;4 sort of slice is a much more intuitive
   way to actually play the game. But it looks cool, and this way you can rotate
   the spaces around in 4D — win some and lose some&hellip;</p>
+  -->
 
   <p>Piece movements generalize quite well. We simply hardcode the forward
   direction for pawns as both along y and w (the 4th spatial axis), and
