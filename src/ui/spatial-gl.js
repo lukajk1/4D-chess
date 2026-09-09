@@ -193,6 +193,14 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     if (better) homeSlotOf[slot.lattice] = s;
   });
 
+  // How many slot copies a square carries. A point where cells meet is drawn
+  // once per cell that claims it, so this varies across the board: the corners
+  // of the tesseract carry four, a face carries one, and a square in the
+  // middle of the w axis touches no w cell at all.
+  const copiesOf = new Int32Array(count);
+  for (let s = 0; s < slotCount; s++) copiesOf[slotLattice[s]]++;
+  const maxCopies = copiesOf.reduce((a, b) => Math.max(a, b), 0);
+
   const positions = new Float32Array(slotCount * 3);
   const pointColors = new Float32Array(slotCount * 3);
   const pointAlpha = new Float32Array(slotCount).fill(1);
@@ -815,15 +823,23 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     ]), 3));
     quad.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
     quad.setIndex([0, 1, 2, 0, 2, 3]);
-    const instanceCount = pieceInstances.length;
-    quad.instanceCount = instanceCount;
+    // Sized for the worst case rather than for the opening position. A piece
+    // is drawn once per slot copy of the square it stands on, and that count
+    // rises as well as falls: a move onto a cube shell touches more cells than
+    // the square it came from, so a board whose pieces travel in w can need
+    // more instances than it started with. Capacity is therefore every piece
+    // on a maximal square, capped by the number of slots that exist -- no
+    // arrangement can exceed either. `instanceCount` on the geometry stays the
+    // live count and is rewritten by setPosition on every move.
+    const capacity = Math.min(pieceCount * maxCopies, slotCount);
+    quad.instanceCount = pieceInstances.length;
 
-    pieceCenters = new Float32Array(instanceCount * 3);
-    pieceHidden = new Float32Array(instanceCount);
-    pieceScale = new Float32Array(instanceCount).fill(1);
-    pieceAlpha = new Float32Array(instanceCount).fill(1);
-    pieceCapturable = new Float32Array(instanceCount);
-    const atlasCells = new Float32Array(instanceCount * 2);
+    pieceCenters = new Float32Array(capacity * 3);
+    pieceHidden = new Float32Array(capacity);
+    pieceScale = new Float32Array(capacity).fill(1);
+    pieceAlpha = new Float32Array(capacity).fill(1);
+    pieceCapturable = new Float32Array(capacity);
+    const atlasCells = new Float32Array(capacity * 2);
     pieceInstances.forEach((inst, k) => {
       atlasCells.set(atlas.index.get(pos.get(inst.lattice)), k * 2);
     });
@@ -2149,12 +2165,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
 
       rebuildPieceInstances();
       if (pieceMesh) {
-        // Piece count only ever falls during a game -- a capture removes one,
-        // a promotion swaps a pawn for a queen -- so the buffers sized at
-        // construction are always large enough and only the count moves.
+        // The buffers hold the worst case, not the opening position: a piece is
+        // drawn once per slot copy of its square, and moving onto a cube shell
+        // gains copies. Clamped rather than trusted, so a new movement rule
+        // that reaches further than the sizing anticipated drops the overflow
+        // instead of throwing mid-frame and freezing the board.
         const geometry = pieceMesh.geometry;
-        geometry.instanceCount = pieceInstances.length;
         const cells = geometry.attributes.aCell;
+        const room = cells.array.length / 2;
+        if (pieceInstances.length > room) pieceInstances.length = room;
+        geometry.instanceCount = pieceInstances.length;
         pieceInstances.forEach((inst, k) => {
           cells.array.set(atlas.index.get(pos.get(inst.lattice)), k * 2);
         });

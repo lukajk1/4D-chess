@@ -50,27 +50,27 @@ function cubeVariant(n) {
 }
 
 // Pawns on the 4D boards are directional along two axes at once: White pushes
-// up x or down w, Black the reverse. Each push is its own move -- a pawn picks
-// an axis per turn -- and captures step one forward plus one square in y or z,
+// up y or down w, Black the reverse. Each push is its own move -- a pawn picks
+// an axis per turn -- and captures step one forward plus one square in x or z,
 // never combining the two forward axes. Promotion is the far corner in both:
-// White at max x and w = 0, Black at x = 0 and max w.
+// White at max y and w = 0, Black at y = 0 and max w.
 // `start` names, per axis, the coordinate a double push is allowed from. It is
 // passed in because the two 4D boards seed their pawns differently: the 8-wide
-// one puts them on a single w layer spanning every file, the 4-wide one on two
-// files of two w layers.
+// one puts them on a single w layer spanning every rank, the 4-wide one on two
+// ranks of two w layers.
 function fourDPawnRules(n, start) {
   return {
     w: {
-      push: [{ axis: 0, direction: 1 }, { axis: 3, direction: -1 }],
-      sideAxes: [1, 2],
+      push: [{ axis: 1, direction: 1 }, { axis: 3, direction: -1 }],
+      sideAxes: [0, 2],
       start: start.w,
-      promoteAt: [[0, n - 1], [3, 0]],
+      promoteAt: [[1, n - 1], [3, 0]],
     },
     b: {
-      push: [{ axis: 0, direction: -1 }, { axis: 3, direction: 1 }],
-      sideAxes: [1, 2],
+      push: [{ axis: 1, direction: -1 }, { axis: 3, direction: 1 }],
+      sideAxes: [0, 2],
       start: start.b,
-      promoteAt: [[0, 0], [3, n - 1]],
+      promoteAt: [[1, 0], [3, n - 1]],
     },
   };
 }
@@ -122,12 +122,11 @@ function hypercubeVariant(n) {
       pawnRank: { w: n - 2, b: 1 },
     }),
     // Both 4D boards share the two-axis pawn. layoutArmies seeds this one's
-    // pawns on a single w layer spanning every file, so w is the only axis
-    // with a double push to allow; x starts wherever the pawn happens to be
-    // and never gets one.
+    // pawns on the y = 1 rank of a single w layer, so both axes have a double
+    // push to allow: y from that rank, w from the layer the army starts on.
     pawnRules: fourDPawnRules(n, {
-      w: { 3: n - 2 },
-      b: { 3: 1 },
+      w: { 1: 1, 3: n - 2 },
+      b: { 1: 1, 3: 1 },
     }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
@@ -197,8 +196,8 @@ function pentaVariant(n = 3) {
 // two are near-reflections, but spelling both out means the layout can be read
 // straight off the page and either side edited on its own.
 //
-// White holds the two outer w layers, w = 4 and w = 3, on files x = 1 and 2.
-// Black holds the two inner ones, w = 1 and w = 2, on files x = 4 and 3.
+// White holds the two outer w layers, w = 4 and w = 3, on ranks y = 1 and 2.
+// Black holds the two inner ones, w = 1 and w = 2, on ranks y = 4 and 3.
 // ---------------------------------------------------------------------------
 function hypercubeFourVariant() {
   const n = 4;
@@ -206,34 +205,34 @@ function hypercubeFourVariant() {
   // The tables count from 1 on every axis; the board counts from 0.
   const put = (x, y, z, w, piece) => pos.set(pos.index([x - 1, y - 1, z - 1, w - 1]), piece);
 
-  // Back ranks, one row per z, read y = 1 to y = 4. Same shape as
+  // Back ranks, one row per z, read x = 1 to x = 4. Same shape as
   // BACK_RANKS[4]: the outer z layers carry rooks and knights, the middle ones
   // the bishops, and z = 3 holds the king and queen.
   const WHITE_RANKS = { 1: 'RNNR', 2: 'BPPB', 3: 'BKQB', 4: 'RNNR' };
   const BLACK_RANKS = { 1: 'rnnr', 2: 'bppb', 3: 'bkqb', 4: 'rnnr' };
 
-  // White: back rank on x = 1 of w = 4, pawn screen on x = 2 of w = 4 and on
-  // both files of w = 3. Each pawn block fills its whole (y, z) plane.
+  // White: back rank on y = 1 of w = 4, pawn screen on y = 2 of w = 4 and on
+  // both ranks of w = 3. Each pawn block fills its whole (x, z) plane.
   for (const [z, rank] of Object.entries(WHITE_RANKS)) {
-    for (let y = 1; y <= n; y++) put(1, y, Number(z), 4, rank[y - 1]);
+    for (let x = 1; x <= n; x++) put(x, 1, Number(z), 4, rank[x - 1]);
   }
-  for (let y = 1; y <= n; y++) {
+  for (let x = 1; x <= n; x++) {
     for (let z = 1; z <= n; z++) {
-      put(2, y, z, 4, 'P');
-      put(1, y, z, 3, 'P');
-      put(2, y, z, 3, 'P');
+      put(x, 2, z, 4, 'P');
+      put(x, 1, z, 3, 'P');
+      put(x, 2, z, 3, 'P');
     }
   }
 
-  // Black: the same arrangement on the far files and the inner w layers.
+  // Black: the same arrangement on the far ranks and the inner w layers.
   for (const [z, rank] of Object.entries(BLACK_RANKS)) {
-    for (let y = 1; y <= n; y++) put(4, y, Number(z), 1, rank[y - 1]);
+    for (let x = 1; x <= n; x++) put(x, 4, Number(z), 1, rank[x - 1]);
   }
-  for (let y = 1; y <= n; y++) {
+  for (let x = 1; x <= n; x++) {
     for (let z = 1; z <= n; z++) {
-      put(3, y, z, 1, 'p');
-      put(4, y, z, 2, 'p');
-      put(3, y, z, 2, 'p');
+      put(x, 3, z, 1, 'p');
+      put(x, 4, z, 2, 'p');
+      put(x, 3, z, 2, 'p');
     }
   }
 
@@ -242,12 +241,12 @@ function hypercubeFourVariant() {
     name: `4D chess (${n}⁴)`,
     shape: pos.shape,
     royalLayers: [2],
-    forwardAxis: 0,
+    forwardAxis: 1,
     forwardDirection: { w: 1, b: -1 },
-    // White's pawns start on x = 2 and on w = 3 (1-based); Black's mirror that.
+    // White's pawns start on y = 2 and on w = 3 (1-based); Black's mirror that.
     pawnRules: fourDPawnRules(n, {
-      w: { 0: 1, 3: 2 },
-      b: { 0: n - 2, 3: n - 3 },
+      w: { 1: 1, 3: 2 },
+      b: { 1: n - 2, 3: n - 3 },
     }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
