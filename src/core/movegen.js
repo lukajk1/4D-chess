@@ -6,6 +6,15 @@ export const forwardDirectionOf = (pos, color) => pos.variant?.forwardDirection?
   ?? (color === WHITE ? 1 : -1);
 const promotionsOf = (pos) => pos.variant?.promotions ?? ['q', 'r', 'b', 'n'];
 
+// A variant may describe its pawns as moving along several axes at once, which
+// the single forwardAxis/forwardDirection pair cannot express. `pawnRules`
+// carries, per colour: the axes a push may run along and which way, the axes a
+// capture steps sideways in, and the corner a pawn promotes on.
+//
+// Pushes are still one axis at a time -- four separate moves, not a diagonal --
+// so a pawn chooses an axis each turn rather than advancing on both together.
+export const pawnRulesOf = (pos, color) => pos.variant?.pawnRules?.[color] ?? null;
+
 // Every generated move carries the same fields in the same order, so this --
 // the engine's most frequent allocation -- keeps to one hidden class, and no
 // consumer has to distinguish "absent" from "false". `rank` is included for
@@ -95,7 +104,80 @@ function pawnCaptureVectors(dims, axis, direction) {
   return vectors;
 }
 
+// Push and capture vectors for a multi-axis pawn, built from `pawnRules`.
+// Cached per colour and dimension count: the rules never change during a game.
+const multiPawnCache = new Map();
+function multiPawnVectors(dims, rules) {
+  const key = `${dims}|${rules.push.map((p) => p.axis + ':' + p.direction).join(',')}|${rules.sideAxes.join(',')}`;
+  if (!multiPawnCache.has(key)) {
+    const pushes = rules.push.map(({ axis, direction }) => {
+      const v = new Array(dims).fill(0);
+      v[axis] = direction;
+      return { axis, direction, vector: v };
+    });
+    // A capture advances one step along one push axis and one square sideways,
+    // in a single named axis. The other push axis is deliberately not offered
+    // as a sideways step, so the two forward directions never combine.
+    const captures = [];
+    for (const { axis, direction } of rules.push) {
+      for (const side of rules.sideAxes) {
+        for (const delta of [-1, 1]) {
+          const v = new Array(dims).fill(0);
+          v[axis] = direction;
+          v[side] = delta;
+          captures.push(v);
+        }
+      }
+    }
+    multiPawnCache.set(key, { pushes, captures });
+  }
+  return multiPawnCache.get(key);
+}
+
+// True when a coordinate sits on the square a pawn of this colour promotes on.
+// The rule is a conjunction: every named axis must be at its stated value, so
+// a pawn promotes in one corner rather than on either far face.
+function atPromotion(coord, rules) {
+  for (const [axis, value] of rules.promoteAt) if (coord[axis] !== value) return false;
+  return true;
+}
+
+function multiPawnMoves(pos, from, piece, color, rules, out) {
+  const coord = toCoord(pos.shape, from);
+  const { pushes, captures } = multiPawnVectors(pos.dims, rules);
+
+  const push = (to, captured, ep = false) => {
+    if (atPromotion(toCoord(pos.shape, to), rules)) {
+      for (const promotion of promotionsOf(pos)) out.push(newMove(from, to, piece, captured, promotion, ep));
+    } else {
+      out.push(newMove(from, to, piece, captured, null, ep));
+    }
+  };
+
+  for (const { axis, direction, vector } of pushes) {
+    const one = step(pos.shape, coord, vector);
+    if (one === -1 || pos.get(one) !== null) continue;
+    push(one, null);
+    // The double step is a first move only, and like a standard pawn's it is
+    // blocked by anything on the square passed over -- already checked above.
+    if (coord[axis] === rules.start[axis]) {
+      const two = step(pos.shape, coord, vector, 2);
+      if (two !== -1 && pos.get(two) === null) out.push(newMove(from, two, piece, null, null, false, true));
+    }
+  }
+
+  for (const vector of captures) {
+    const to = step(pos.shape, coord, vector);
+    if (to === -1) continue;
+    const target = pos.get(to);
+    if (target !== null && colorOf(target) !== color) push(to, target);
+    else if (target === null && to === pos.ep) push(to, withColor('p', opposite(color)), true);
+  }
+}
+
 function pawnMoves(pos, from, piece, color, out) {
+  const rules = pawnRulesOf(pos, color);
+  if (rules) return multiPawnMoves(pos, from, piece, color, rules, out);
   const axis = forwardAxisOf(pos);
   const direction = forwardDirectionOf(pos, color);
   const coord = toCoord(pos.shape, from);
@@ -154,6 +236,21 @@ export function envelope(pos, from, { ignoreOccupancy = false } = {}) {
   const coord = toCoord(pos.shape, from);
   const reached = new Set();
   if (type === 'p') {
+    const rules = pawnRulesOf(pos, color);
+    if (rules) {
+      // Generate and read off the destinations, so the envelope cannot drift
+      // from what pawnMoves actually allows.
+      const moves = [];
+      multiPawnMoves(pos, from, piece, color, rules, moves);
+      for (const move of moves) reached.add(move.to);
+      if (ignoreOccupancy) {
+        for (const vector of multiPawnVectors(pos.dims, rules).captures) {
+          const to = step(pos.shape, coord, vector);
+          if (to !== -1) reached.add(to);
+        }
+      }
+      return [...reached];
+    }
     const axis = forwardAxisOf(pos);
     const direction = forwardDirectionOf(pos, color);
     const forward = new Array(pos.dims).fill(0);
@@ -252,9 +349,13 @@ function probeAttackers(pos, index, byColor, found) {
 
   // A pawn attacking this square stands one capture vector back from it.
   const pawn = withColor('p', byColor);
+  const pawnRules = pawnRulesOf(pos, byColor);
   const axis = forwardAxisOf(pos);
   const direction = forwardDirectionOf(pos, byColor);
-  for (const vector of pawnCaptureVectorsFor(pos.dims, axis, direction)) {
+  const captureVectors = pawnRules
+    ? multiPawnVectors(pos.dims, pawnRules).captures
+    : pawnCaptureVectorsFor(pos.dims, axis, direction);
+  for (const vector of captureVectors) {
     const from = step(shape, coord, vector, -1);
     if (from !== -1 && pos.squares[from] === pawn) {
       if (!found) return true;
@@ -310,10 +411,15 @@ export function inCheck(pos, color = pos.turn) {
 }
 
 function midpoint(pos, move) {
-  const axis = forwardAxisOf(pos);
   const from = toCoord(pos.shape, move.from);
   const to = toCoord(pos.shape, move.to);
   const mid = from.slice();
+  // A multi-axis pawn picks a push axis per move, so the axis that moved is
+  // read off the move itself rather than taken from the variant.
+  const axis = pawnRulesOf(pos, colorOf(move.piece))
+    ? from.findIndex((v, a) => v !== to[a])
+    : forwardAxisOf(pos);
+  if (axis === -1) return move.to;
   mid[axis] = (from[axis] + to[axis]) / 2;
   return toIndex(pos.shape, mid);
 }
@@ -347,7 +453,17 @@ export function applyMove(pos, move) {
   pos.set(move.from, null);
   if (move.ep) {
     const captureCoord = toCoord(pos.shape, move.to);
-    captureCoord[forwardAxisOf(pos)] -= forwardDirectionOf(pos, color);
+    const epRules = pawnRulesOf(pos, color);
+    if (epRules) {
+      // The capture ran along one push axis and one side axis; the pawn taken
+      // stands back along the push axis only.
+      const fromCoord = toCoord(pos.shape, move.from);
+      for (const { axis, direction } of epRules.push) {
+        if (captureCoord[axis] - fromCoord[axis] === direction) { captureCoord[axis] -= direction; break; }
+      }
+    } else {
+      captureCoord[forwardAxisOf(pos)] -= forwardDirectionOf(pos, color);
+    }
     undo.epSquare = toIndex(pos.shape, captureCoord);
     undo.epPiece = pos.squares[undo.epSquare];
     pos.set(undo.epSquare, null);

@@ -49,6 +49,32 @@ function cubeVariant(n) {
   };
 }
 
+// Pawns on the 4D boards are directional along two axes at once: White pushes
+// up x or down w, Black the reverse. Each push is its own move -- a pawn picks
+// an axis per turn -- and captures step one forward plus one square in y or z,
+// never combining the two forward axes. Promotion is the far corner in both:
+// White at max x and w = 0, Black at x = 0 and max w.
+// `start` names, per axis, the coordinate a double push is allowed from. It is
+// passed in because the two 4D boards seed their pawns differently: the 8-wide
+// one puts them on a single w layer spanning every file, the 4-wide one on two
+// files of two w layers.
+function fourDPawnRules(n, start) {
+  return {
+    w: {
+      push: [{ axis: 0, direction: 1 }, { axis: 3, direction: -1 }],
+      sideAxes: [1, 2],
+      start: start.w,
+      promoteAt: [[0, n - 1], [3, 0]],
+    },
+    b: {
+      push: [{ axis: 0, direction: -1 }, { axis: 3, direction: 1 }],
+      sideAxes: [1, 2],
+      start: start.b,
+      promoteAt: [[0, 0], [3, n - 1]],
+    },
+  };
+}
+
 function hypercubeVariant(n) {
   const pos = new Position({ shape: [n, n, n, n] });
   // A 4-wide cube has no room for pawns along y, so layoutArmies leaves them
@@ -94,6 +120,14 @@ function hypercubeVariant(n) {
       forwardAxis: 3,
       forwardDirection: { w: -1, b: 1 },
       pawnRank: { w: n - 2, b: 1 },
+    }),
+    // Both 4D boards share the two-axis pawn. layoutArmies seeds this one's
+    // pawns on a single w layer spanning every file, so w is the only axis
+    // with a double push to allow; x starts wherever the pawn happens to be
+    // and never gets one.
+    pawnRules: fourDPawnRules(n, {
+      w: { 3: n - 2 },
+      b: { 3: 1 },
     }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
@@ -210,7 +244,11 @@ function hypercubeFourVariant() {
     royalLayers: [2],
     forwardAxis: 0,
     forwardDirection: { w: 1, b: -1 },
-    pawnRank: { w: 1, b: 2 },
+    // White's pawns start on x = 2 and on w = 3 (1-based); Black's mirror that.
+    pawnRules: fourDPawnRules(n, {
+      w: { 0: 1, 3: 2 },
+      b: { 0: n - 2, 3: n - 3 },
+    }),
     blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
     castling: [],
     start: toFen(pos),
