@@ -24,6 +24,14 @@ const FILES = 'abcdefghijklmnopqrstuvwxyz';
 //   2D  e4         file, rank
 //   3D  γe4        layer (Greek), file, rank
 //   4D  Dγe4       w-depth (capital), layer, file, rank
+//   5D  v_2Dγe4    v-depth (named axis), w-depth, layer, file, rank
+//
+// The fifth axis is where the alphabets run out. Rather than pick a fourth one
+// nobody can type, v is named outright and carries its coordinate as a digit:
+// "v_2" is unambiguous, survives a round trip through the FEN field, and reads
+// as a coordinate rather than as a rank that wandered to the front. Any axis
+// beyond the fifth falls back to a ":n" suffix, which is where this stops
+// pretending to be readable.
 //
 // Capitals count w and Greek letters count z. Both are plain coordinates, so
 // there are n of each. The viewer's eight "cells" are a different thing -- the
@@ -39,6 +47,11 @@ export const W_ROMAN = [
   'xvii', 'xviii', 'xix', 'xx', 'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxvi',
 ];
 
+// Named-axis prefixes for everything past w, in axis order from axis 4 up.
+// Underscore rather than a Unicode subscript so the name can be typed back in.
+export const AXIS_NAMES = ['v', 'u', 't'];
+export const axisPrefix = (axis, value) => `${AXIS_NAMES[axis - 4]}_${value + 1}`;
+
 export const layerName = (z) => GREEK[z];
 export const wName = (w) => W_ROMAN[w] ?? String(w + 1);
 
@@ -48,14 +61,34 @@ export function squareName(shape, index) {
   let name = FILES[coord[0]] + (coord[1] + 1);
   if (shape.length >= 3) name = GREEK[coord[2]] + name;
   if (shape.length >= 4) name = wName(coord[3]) + name;
-  // Beyond four axes there is no obvious alphabet left; fall back to suffixes.
-  for (let axis = 4; axis < shape.length; axis++) name += ':' + (coord[axis] + 1);
+  // Named axes stack on the front like the others, highest axis outermost, so
+  // a name still reads outside-in: v, then w, then z, then file and rank.
+  for (let axis = 4; axis < shape.length; axis++) {
+    if (axis - 4 < AXIS_NAMES.length) name = axisPrefix(axis, coord[axis]) + name;
+    else name += ':' + (coord[axis] + 1);
+  }
   return name;
 }
 
 export function parseSquare(shape, name) {
-  const [head, ...rest] = name.split(':');
+  const [full, ...rest] = name.split(':');
   const coord = new Array(shape.length).fill(0);
+  // Strip the named prefixes off the front before the older branches run, so
+  // everything below still sees the 1D-to-4D name it was written to parse.
+  let head = full;
+  for (let axis = shape.length - 1; axis >= 4; axis--) {
+    if (axis - 4 >= AXIS_NAMES.length) continue;
+    const tag = AXIS_NAMES[axis - 4] + '_';
+    if (!head.startsWith(tag)) continue;
+    // Read the digits by hand rather than through a built regex: the escaping
+    // needed to get \d into a template literal is exactly the sort of thing
+    // that silently matches a literal "d" instead.
+    let end = tag.length;
+    while (end < head.length && head[end] >= '0' && head[end] <= '9') end++;
+    if (end === tag.length) continue;
+    coord[axis] = Number(head.slice(tag.length, end)) - 1;
+    head = head.slice(end);
+  }
   if (shape.length >= 4) {
     let greekPos = -1;
     for (let j = 0; j < head.length; j++) {
@@ -83,7 +116,8 @@ export function parseSquare(shape, name) {
   } else if (shape.length === 1) {
     coord[0] = FILES.indexOf(head[0]);
   }
-  rest.forEach((part, k) => { coord[4 + k] = parseInt(part, 10) - 1; });
+  const suffixAxis = 4 + AXIS_NAMES.length;
+  rest.forEach((part, k) => { coord[suffixAxis + k] = parseInt(part, 10) - 1; });
   return toIndex(shape, coord);
 }
 

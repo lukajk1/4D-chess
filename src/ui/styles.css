@@ -726,6 +726,25 @@ body:not(.inspection) .layout { height: calc(100vh - 46px); }
   background-color: color-mix(in srgb, var(--panel) 86%, transparent);
   backdrop-filter: blur(8px);
 }
+
+/* The native select arrow is replaced with the chevron the control groups draw
+   in ::after, so the two sides of the view point the same way. That one is a
+   7x7 box with a right and bottom border turned 45deg; this is the polyline
+   those two borders trace, at the same 1.6px stroke and the same inset from the
+   right edge. The stroke is a fixed mid grey: currentColor does not reach
+   inside a data URI, and #97a0ab is what --muted resolves to on this board. */
+#variant,
+#opponent {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 7'%3E%3Cpath d='M1 1.4 5 5.4 9 1.4' fill='none' stroke='%2397a0ab' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 10px 7px;
+}
+#variant:hover,
+#opponent:hover { border-color: var(--accent); }
 #explain {
   display: flex;
   align-items: center;

@@ -5,7 +5,7 @@ import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { envelope, inCheck, attackersOf } from '../core/movegen.js';
-import { squareName, layerName, wName } from '../core/notation.js';
+import { squareName, layerName, wName, AXIS_NAMES } from '../core/notation.js';
 import { PIECES, nameOf } from '../core/pieces.js';
 import { createModelPieces, pieceColorAt } from './model-pieces.js';
 import { loadSkybox } from './skybox.js';
@@ -2186,7 +2186,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       writeSlotPositions();
       const piece = selected === null ? null : pos.get(selected);
       const coordText = selected === null ? ''
-        : coords[selected].map((v, i) => `${['x', 'y', 'z', 'w'][i] ?? i}:${v + 1}`).join(', ');
+        // Axis 4 and up take their letters from the notation module, so the
+        // readout and the square name above it call the same axis v.
+        : coords[selected].map((v, i) => `${['x', 'y', 'z', 'w'][i] ?? AXIS_NAMES[i - 4] ?? i}:${v + 1}`).join(', ');
       caption.textContent = selected === null ? ''
         : `${squareName(pos.shape, selected)} · ${piece ? `${piece === piece.toUpperCase() ? 'White' : 'Black'} ${nameOf(piece.toLowerCase())}` : 'Empty'} · (${coordText})`;
       needsRender = true;

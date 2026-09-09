@@ -35,6 +35,7 @@ const state = {
   selected: null,
   moves: [],       // legal moves for the side to move, rebuilt once per position
   check: false,    // is that side's king attacked right now
+  over: null,      // { result, reason } once the game has ended, else null
   opponent: 'easy',  // difficulty key, or null for two players
   askedFor: null,  // the position the engine was last asked about
 };
@@ -95,7 +96,7 @@ function ensureComputer() {
 // not set the engine going again on a board it is already thinking about.
 function askComputer() {
   const pos = state.position;
-  if (!state.opponent || pos.turn !== COMPUTER || !state.moves.length) return;
+  if (!state.opponent || pos.turn !== COMPUTER || !state.moves.length || state.over) return;
   if (state.askedFor === pos) return;
   state.askedFor = pos;
   const id = ++computerRequest;
@@ -227,10 +228,8 @@ function refreshExplorer(pos, lastMove = null) {
       // Read off the list refresh() already built rather than calling status(),
       // which would recompute legalMoves -- tens of milliseconds on the 8^4
       // board for an answer we are holding.
-      turn.textContent = state.moves.length === 0
-        ? (state.check
-          ? `Checkmate — ${current.turn === 'w' ? 'Black' : 'White'} wins`
-          : 'Stalemate — draw')
+      turn.textContent = state.over
+        ? outcomeText(state.over)
         : `${current.turn === 'w' ? 'White' : 'Black'} to move${state.check ? ' — check' : ''}`;
       const previous = state.history.at(-1);
       last.textContent = previous
@@ -417,9 +416,27 @@ function refresh() {
   // click -- selection goes through refreshExplorer, which does not come here.
   state.moves = legalMoves(pos);
   state.check = inCheck(pos);
+  // status() would recompute legalMoves -- tens of milliseconds on the 8^4
+  // board for a list already in hand -- so the same three cases are read off
+  // what is here. A missing king comes first for the reason status() gives:
+  // inCheck reads one as "not in check", so a kingless side is never mated.
+  const loser = ['w', 'b'].find((color) => pos.kingIndex(color) === -1);
+  state.over = loser ? { result: loser === 'w' ? 'b' : 'w', reason: 'king captured' }
+    : state.moves.length ? null
+    : state.check ? { result: pos.turn === 'w' ? 'b' : 'w', reason: 'checkmate' }
+    : { result: 'draw', reason: 'stalemate' };
   refreshExplorer(pos, state.animatingMove ?? null);
   state.animatingMove = null;
   askComputer();
+}
+
+// The sentence a finished game gets, in the readout and in the toast alike.
+function outcomeText(over) {
+  if (over.result === 'draw') return 'Stalemate — draw';
+  const winner = over.result === 'w' ? 'White' : 'Black';
+  return over.reason === 'king captured'
+    ? `${over.result === 'w' ? 'Black' : 'White'}'s king captured — ${winner} wins`
+    : `Checkmate — ${winner} wins`;
 }
 
 function renderHistory() {
@@ -507,6 +524,9 @@ export function submitMove(move) {
   toast(`${colorOf(piece) === 'w' ? 'White' : 'Black'} ${displayMove(position.shape, submitted)}`);
   state.selected = null;
   refresh();
+  // After refresh, so it interrupts the move toast above rather than being
+  // interrupted by it: one toast shows at a time, and the last call wins.
+  if (state.over) toast(outcomeText(state.over));
   return true;
 }
 
@@ -555,11 +575,14 @@ function loadFromField() {
   }
 }
 
+// '5d-3' is defined and playable but left out here: it is still reachable by
+// loading its FEN, and by adding it back to this set.
 const ALLOWED_VARIANTS = new Set(['1d', '2d', '3d', '4d-4', '4d']);
 const VARIANT_LABELS = {
   '1d': '1D - 8 strip', '2d': '2D - 8² board',
   '3d': '3D - 8³ board',
   '4d-4': '4D - 4⁴ board', '4d': '4D - 8⁴ board',
+  '5d-3': '5D - 3⁵ board (experimental)',
 };
 for (const [id, variant] of Object.entries(VARIANTS)) {
   if (!ALLOWED_VARIANTS.has(id)) continue;

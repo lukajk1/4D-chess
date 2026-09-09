@@ -424,6 +424,17 @@ export function legalMoves(pos, color = pos.turn) {
 }
 
 export function status(pos) {
+  // A side with no king left has lost, and this is checked before anything
+  // else because the rest of the file assumes a king exists: inCheck reads a
+  // missing one as "not in check", so a kingless side would otherwise go on
+  // playing, never in check and never mated. Legality testing cannot let this
+  // happen in a normal game -- but a position can be loaded from FEN, and a
+  // variant is free to leave a side without one.
+  for (const color of ['w', 'b']) {
+    if (pos.kingIndex(color) === -1) {
+      return { over: true, check: false, result: opposite(color), reason: 'king captured' };
+    }
+  }
   const moves = legalMoves(pos);
   const checked = inCheck(pos);
   if (moves.length > 0) return { over: false, check: checked, result: null, reason: null };

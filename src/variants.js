@@ -101,6 +101,122 @@ function hypercubeVariant(n) {
   };
 }
 
+// 3^5. Experimental, and the first board too narrow for layoutArmies: three
+// files leave no room for a back rank, so the army is placed by hand.
+//
+// The two sides are separated along v -- the newest axis, and the one worth
+// making the game about -- so v is also the forward axis and the pawns advance
+// along it. That leaves all four of x, y, z, w free for the diagonal captures,
+// and means a pawn's every capture direction crosses an axis the 4D board did
+// not have to offer.
+function pentaVariant(n = 3) {
+  const pos = new Position({ shape: [n, n, n, n, n] });
+  const mid = (n - 1) / 2;
+
+  // Royals on the middle file of the middle layer, so both armies sit in the
+  // centre of their own v slice and neither starts closer to an edge. The rook
+  // goes beside the king rather than behind it: with only three files there is
+  // no behind.
+  const place = (x, y, z, piece) => {
+    pos.set(pos.index([x, y, z, mid, n - 1]), piece);
+    pos.set(pos.index([x, y, z, mid, 0]), piece.toLowerCase());
+  };
+  place(mid, 0, mid, 'K');
+  place(mid, 1, mid, 'Q');
+  place(0, 0, mid, 'R');
+
+  // No pawns. Three v slices leave no room for them: a pawn one step in front
+  // of its own king stands on the middle slice, which is also one step in front
+  // of the enemy king, and a pawn captures diagonally forward -- so both kings
+  // would start in check from the other side's pawns, and 3^5 has no third
+  // rank to back them off to. Pawns arrive when n reaches 5.
+  //
+  // What is left is a genuine game rather than a placeholder: king, queen and
+  // rook apiece on a 243-square board, with the queen sliding along all ten
+  // planes and the rook along all five axes.
+
+  return {
+    id: `5d-${n}`,
+    name: `5D chess (${n}⁵)`,
+    shape: pos.shape,
+    inspectionOnly: true,
+    royalLayers: [mid],
+    // Declared even with no pawns on the board: a promotion cannot happen here,
+    // but anything that asks which way is forward should be told v, not y.
+    forwardAxis: 4,
+    forwardDirection: { w: -1, b: 1 },
+    blurb: `${n} × ${n} × ${n} × ${n} × ${n} · ${(n ** 5).toLocaleString()} positions · Experimental`,
+    castling: [],
+    start: toFen(pos),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The 4^4 board, laid out square by square rather than by BACK_RANKS.
+// hypercubeVariant(n) still generates the 8-wide board; this one is placed by
+// hand because the 4-wide layout is a deliberate arrangement rather than the
+// generated one, in the same spirit as pentaVariant. Coordinates are written
+// 1-based and converted on the way in, so the tables below read against the
+// square names the UI shows rather than against raw indices.
+//
+// Each colour is written out in full, without deriving one from the other. The
+// two are near-reflections, but spelling both out means the layout can be read
+// straight off the page and either side edited on its own.
+//
+// White holds the two outer w layers, w = 4 and w = 3, on files x = 1 and 2.
+// Black holds the two inner ones, w = 1 and w = 2, on files x = 4 and 3.
+// ---------------------------------------------------------------------------
+function hypercubeFourVariant() {
+  const n = 4;
+  const pos = new Position({ shape: [n, n, n, n] });
+  // The tables count from 1 on every axis; the board counts from 0.
+  const put = (x, y, z, w, piece) => pos.set(pos.index([x - 1, y - 1, z - 1, w - 1]), piece);
+
+  // Back ranks, one row per z, read y = 1 to y = 4. Same shape as
+  // BACK_RANKS[4]: the outer z layers carry rooks and knights, the middle ones
+  // the bishops, and z = 3 holds the king and queen.
+  const WHITE_RANKS = { 1: 'RNNR', 2: 'BPPB', 3: 'BKQB', 4: 'RNNR' };
+  const BLACK_RANKS = { 1: 'rnnr', 2: 'bppb', 3: 'bkqb', 4: 'rnnr' };
+
+  // White: back rank on x = 1 of w = 4, pawn screen on x = 2 of w = 4 and on
+  // both files of w = 3. Each pawn block fills its whole (y, z) plane.
+  for (const [z, rank] of Object.entries(WHITE_RANKS)) {
+    for (let y = 1; y <= n; y++) put(1, y, Number(z), 4, rank[y - 1]);
+  }
+  for (let y = 1; y <= n; y++) {
+    for (let z = 1; z <= n; z++) {
+      put(2, y, z, 4, 'P');
+      put(1, y, z, 3, 'P');
+      put(2, y, z, 3, 'P');
+    }
+  }
+
+  // Black: the same arrangement on the far files and the inner w layers.
+  for (const [z, rank] of Object.entries(BLACK_RANKS)) {
+    for (let y = 1; y <= n; y++) put(4, y, Number(z), 1, rank[y - 1]);
+  }
+  for (let y = 1; y <= n; y++) {
+    for (let z = 1; z <= n; z++) {
+      put(3, y, z, 1, 'p');
+      put(4, y, z, 2, 'p');
+      put(3, y, z, 2, 'p');
+    }
+  }
+
+  return {
+    id: '4d-4',
+    name: `4D chess (${n}⁴)`,
+    shape: pos.shape,
+    royalLayers: [2],
+    forwardAxis: 0,
+    forwardDirection: { w: 1, b: -1 },
+    pawnRank: { w: 1, b: 2 },
+    blurb: `${n} × ${n} × ${n} × ${n} · ${(n ** 4).toLocaleString()} positions · Eight cells, one lattice`,
+    castling: [],
+    start: toFen(pos),
+  };
+}
+
 // Castling rights are declared as data rather than hardcoded in the generator,
 // so a variant without castling simply declares none.
 function castlingRight(shape, id, color, king, rook, empty, safe) {
@@ -153,11 +269,12 @@ export const VARIANTS = {
   // vertical step to keep them in frame. Declared here rather than inferred
   // from the shape, so no other board is affected by it.
   '3d': { ...cubeVariant(8), verticalSpacing: .5 },
-  '4d-4': hypercubeVariant(4),
+  '4d-4': hypercubeFourVariant(),
   // Eight w cells subdivide each z interval eight ways rather than four, so the
   // planes crowd; a third again of vertical step separates them. Same knob the
   // 8-cube uses, and like it, declared only on the board that wants it.
   '4d': { ...hypercubeVariant(8), verticalSpacing: 1.35 },
+  '5d-3': pentaVariant(3),
 };
 
 export function startPosition(id) {
