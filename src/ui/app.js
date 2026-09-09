@@ -15,6 +15,7 @@ document.addEventListener('keydown', unlockAudio);
 const els = {
   variant: document.querySelector('#variant'),
   opponent: document.querySelector('#opponent'),
+  explain: document.querySelector('#explain'),
   boardArea: document.querySelector('#board-area'),
   status: document.querySelector('#status'),
   history: document.querySelector('#history'),
@@ -256,7 +257,7 @@ function refreshExplorer(pos, lastMove = null) {
     const credit = viewer.element.querySelector('.credit-link');
     if (credit) brand.append(credit);
     // Board picker heads the control stack, directly under the game state.
-    hud.append(brand, moveDisplay, els.variant, els.opponent);
+    hud.append(brand, moveDisplay, els.variant, els.opponent, els.explain);
     const side = document.createElement('aside');
     side.className = 'explorer-side';
     side.hidden = true;
@@ -576,6 +577,92 @@ for (const [key, options] of [['', 'Two players'], ...Object.entries(difficultie
   els.opponent.append(option);
 }
 els.opponent.value = state.opponent ?? '';
+
+// Built on first open and kept afterwards. The prose is the whole of
+// explanation.js, which is a lot of bytes for something most visitors will
+// never open, so it is fetched by the first open rather than by the page load.
+const HASH = '#explanation';
+let explainDialog = null;
+let explainPending = null;
+
+async function buildExplanationDialog() {
+  // One lazy step, two modules: the prose and the figures that go in it are
+  // useless apart, and neither is wanted until the dialog is asked for.
+  const [{ explanationHTML }, { mountVisuals }] = await Promise.all([
+    import('./explanation.js'),
+    import('./explanation-visuals.js'),
+  ]);
+  const dialog = document.createElement('dialog');
+  dialog.className = 'explain-dialog';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'explain-close';
+  close.setAttribute('aria-label', 'Close');
+  close.textContent = '×';
+  close.addEventListener('click', () => dialog.close());
+  const body = document.createElement('div');
+  body.className = 'explain-body';
+  body.innerHTML = explanationHTML;
+  // A click that lands on the dialog element itself, rather than on the body
+  // filling it, is a click on the backdrop. The dialog carries no padding of
+  // its own, so there is no third case.
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  // The X, a backdrop click and Esc all end here, so the URL is tidied once
+  // for all three. replaceState rather than another hash write: closing should
+  // not leave a history entry for the player to walk back into.
+  dialog.addEventListener('close', () => {
+    if (location.hash === HASH) history.replaceState(null, '', location.pathname + location.search);
+  });
+  dialog.append(close, body);
+  // On <body>, not in the shell: the shell is rebuilt on every move.
+  document.body.append(dialog);
+  // Mounted once, run only while the dialog is up -- a closed dialog is
+  // display:none, so a frame loop behind it would be three canvases of nothing.
+  const visuals = mountVisuals(body);
+  dialog.addEventListener('close', visuals.stop);
+  dialog.visuals = visuals;
+  return dialog;
+}
+
+async function openExplanation() {
+  if (!explainDialog) {
+    els.explain.disabled = true;
+    try {
+      // One build however many times this is called: a click and a hashchange
+      // can both arrive before the import resolves.
+      explainPending ??= buildExplanationDialog();
+      explainDialog = await explainPending;
+    } catch (error) {
+      explainPending = null;
+      toast('Could not load the explanation');
+      return;
+    } finally {
+      els.explain.disabled = false;
+    }
+  }
+  if (explainDialog.open) return;
+  explainDialog.querySelector('.explain-body').scrollTop = 0;
+  explainDialog.showModal();
+  explainDialog.visuals.start();
+}
+
+// The hash is the state rather than a one-shot trigger, so every way in and out
+// agrees: a shared link opens the dialog, the button opens it by writing the
+// hash, and Back closes it.
+function syncExplanation() {
+  if (location.hash === HASH) openExplanation();
+  else explainDialog?.close();
+}
+window.addEventListener('hashchange', syncExplanation);
+els.explain.addEventListener('click', () => {
+  // Writing a hash that is already set fires no hashchange, so that case opens
+  // directly. It happens when the page was loaded on the link and then closed.
+  if (location.hash === HASH) openExplanation();
+  else location.hash = HASH;
+});
+syncExplanation();
 
 els.variant.addEventListener('change', (event) => newGame(event.target.value));
 // Restarting on change is what makes this "choose before you play": swapping

@@ -137,7 +137,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     <p><a href="https://opengameart.org/content/cloudy-skyboxes-0" target="_blank" rel="noopener"><cite>Cloudy Skyboxes</cite></a>
       by Screaming Brain Studios, released under
       <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="license noopener">CC0</a>
-      into the public domain, via OpenGameArt. Credit is not required; this is here anyway.</p>
+      into the public domain, via OpenGameArt.</p>
     <form method="dialog"><button>Close</button></form>`;
   creditLink.addEventListener('click', () => creditDialog.showModal());
   root.append(axisLabelLayer, caption, creditLink, creditDialog);
