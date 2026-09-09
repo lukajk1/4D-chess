@@ -1,4 +1,4 @@
-# n-dimensional chess
+# 4D chess
 
 ![The 8×8×8×8 board mid-game](4chess.png)
 
