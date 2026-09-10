@@ -29,7 +29,7 @@ const els = {
 };
 
 const state = {
-  variantId: '4d-4',
+  variantId: '4d',
   position: null,
   history: [],      // { position, move } for undo and the move list
   selected: null,
@@ -596,7 +596,12 @@ for (const [id, variant] of Object.entries(VARIANTS)) {
 }
 els.variant.value = state.variantId;
 
-for (const [key, options] of [['', 'Two players'], ...Object.entries(difficulties).map(([k, o]) => [k, `Computer — ${o.label}`])]) {
+// Extreme is not offered: depth 4 on an 8^4 board is a long wait for a move,
+// and the default board is now that one. search.js still defines it, so it is
+// reachable from code and comes back by dropping it from this set.
+const HIDDEN_DIFFICULTIES = new Set(['extreme']);
+const offered = Object.entries(difficulties).filter(([k]) => !HIDDEN_DIFFICULTIES.has(k));
+for (const [key, options] of [['', 'Two players'], ...offered.map(([k, o]) => [k, `Computer — ${o.label}`])]) {
   const option = document.createElement('option');
   option.value = key;
   option.textContent = options;

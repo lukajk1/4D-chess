@@ -164,6 +164,16 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   let camera = orthographic;
   for (const cam of [perspective, orthographic]) cam.position.set(distance * 0.55, distance * 0.45, distance * 0.7);
 
+  // A slow turn on load, so the board arrives already reading as a solid in
+  // space rather than as a flat drawing: one silhouette tells you very little
+  // about a tesseract. It orbits the target at a fixed distance -- the camera
+  // rides a circle, the framing never changes -- and yields the moment the
+  // viewer touches anything, since a camera that fights the mouse is worse
+  // than one that never moved.
+  const IDLE_ORBIT_SPEED = 0.19;   // radians per second
+  let idleOrbit = true;
+  const stopIdleOrbit = () => { idleOrbit = false; };
+
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
@@ -336,14 +346,19 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     return dz + dw * outward;
   };
 
+  // The three planes containing w. Adding another is one entry here: the angle
+  // and playing arrays, the sliders and the reset all size themselves off it.
   const wPlanes = [[0, 3], [1, 3], [2, 3]];
   const TAU = Math.PI * 2;
-  const rotationAngles = new Float64Array(3);
-  // XW, YW, ZW, all at one rate; YW differs only in sign, so it counter-turns.
-  // Equal rates mean the three planes stay in step and the combined motion
-  // repeats, where three incommensurate ones would not -- deliberate, so the
-  // turn reads as a single rotation rather than a drift.
+  const rotationAngles = new Float64Array(wPlanes.length);
+  // All at one rate; YW differs only in sign, so it counter-turns. Equal rates
+  // mean the planes stay in step and the combined motion repeats, where
+  // incommensurate ones would not -- deliberate, so the turn reads as a single
+  // rotation rather than a drift.
   const rotationSpeeds = [.1496, -.1496, .1496];
+  // Which of the above actually carry geometry through w. "Play 4D rotation"
+  // drives these and leaves XY to its own control.
+  const FOUR_D_PLANES = wPlanes.map(([a, b], i) => (a === 3 || b === 3 ? i : -1)).filter((i) => i >= 0);
   const rotated4 = [0, 0, 0, 0];
   function rotateThroughWPlanes(c) {
     for (let axis = 0; axis < 4; axis++) rotated4[axis] = c[axis] - center[axis];
@@ -1119,7 +1134,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   let showSquareNotation = false;
   let showPieces = true;
   let pieceMode = 'meshes';
-  const rotationPlaying = [false, false, false];
+  const rotationPlaying = wPlanes.map(() => false);
   let disposed = false;
   let needsRender = true;
 
@@ -1635,6 +1650,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
   }
 
   controls.addEventListener('change', () => { needsRender = true; reportZoom(); });
+  // Any deliberate camera input ends the idle turn. 'start' fires on a drag,
+  // a pinch and a wheel alike, and the keys are the view's own shortcuts.
+  controls.addEventListener('start', stopIdleOrbit);
+  canvas.addEventListener('pointerdown', stopIdleOrbit, { passive: true });
+  canvas.addEventListener('wheel', stopIdleOrbit, { passive: true });
+  canvas.addEventListener('keydown', stopIdleOrbit);
 
   // ---- picking
   const raycaster = new THREE.Raycaster();
@@ -1691,6 +1712,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     camera.zoom = 1;
     camera.updateProjectionMatrix();
     controls.target.set(0, 0, 0);
+    idleOrbit = true;
     controls.update();
     reportZoom();
   });
@@ -1825,7 +1847,7 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       button.setAttribute('aria-pressed', String(rotationPlaying[i]));
     });
     if (rotationButton) {
-      const playing = rotationPlaying.some(Boolean);
+      const playing = FOUR_D_PLANES.some((i) => rotationPlaying[i]);
       rotationButton.textContent = playing ? 'Pause 4D rotation' : 'Play 4D rotation';
       rotationButton.setAttribute('aria-pressed', String(playing));
     }
@@ -1853,9 +1875,12 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     syncFoldUI();
   });
 
+  // "Play 4D rotation" drives the three planes containing w and leaves XY
+  // alone: XY is an ordinary spatial spin, and sweeping it in with the others
+  // would make the combined motion read as a tumble rather than a 4D turn.
   rotationButton?.addEventListener('click', () => {
-    const playAll = !rotationPlaying.some(Boolean);
-    rotationPlaying.fill(playAll);
+    const playAll = !FOUR_D_PLANES.some((i) => rotationPlaying[i]);
+    for (const i of FOUR_D_PLANES) rotationPlaying[i] = playAll;
     syncRotationButtons();
     needsRender = true;
   });
@@ -1980,6 +2005,23 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
       needsRender = true;
     }
 
+    if (idleOrbit) {
+      // Turn the camera about the target's vertical axis. Rotating the offset
+      // rather than setting an angle keeps whatever elevation and distance the
+      // view already had, including a restored camera state.
+      const offset = camera.position.clone().sub(controls.target);
+      const angle = IDLE_ORBIT_SPEED * elapsed;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const x = offset.x * cos - offset.z * sin;
+      const z = offset.x * sin + offset.z * cos;
+      offset.x = x;
+      offset.z = z;
+      camera.position.copy(controls.target).add(offset);
+      camera.lookAt(controls.target);
+      needsRender = true;
+    }
+
     const hasTossed = modelPieces.updateTossed?.(elapsed);
     if (hasTossed) needsRender = true;
 
@@ -2038,6 +2080,9 @@ export function createSpatialView(pos, onSelect, glyphFor, lastMove = null, targ
     setCameraState(state) {
       if (!state) return;
       if (state.cameraKind) setCamera(state.cameraKind);
+      // A carried-over camera is one the viewer already aimed, so the arrival
+      // turn does not start over on top of it. A fresh view still gets one.
+      if (state.position || state.target) stopIdleOrbit();
       if (state.position) camera.position.copy(state.position);
       if (state.target) controls.target.copy(state.target);
       if (state.zoom !== undefined) {
