@@ -58,13 +58,6 @@ export const explanationHTML = `
     you are one dimension short of the room they are turning in.</figcaption>
   </figure>
 
-  <h2>Isn't the 4th dimension time?</h2>
-
-  <p>Yes and no. "Dimensions" in broad usage just means values that define a
-  reality. But "dimensions" here refers to <em>spatial</em> dimensions: in the
-  case of 4D, a new axis called w, so that a vertex is defined across four
-  values — (x, y, z, w).</p>
-
   <h2>Folding and unfolding</h2>
 
   <!-- Visual: the 3D→2D and 4D→3D unwrapping animations, side by side. -->
